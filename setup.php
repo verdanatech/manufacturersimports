@@ -27,7 +27,7 @@
  --------------------------------------------------------------------------
  */
 
-define('PLUGIN_MANUFACTURERSIMPORTS_VERSION', '3.0.8');
+define('PLUGIN_MANUFACTURERSIMPORTS_VERSION', '3.0.9');
 
 if (!defined("PLUGIN_MANUFACTURERSIMPORTS_DIR")) {
     define("PLUGIN_MANUFACTURERSIMPORTS_DIR", Plugin::getPhpDir("manufacturersimports"));
@@ -90,7 +90,7 @@ function plugin_version_manufacturersimports()
             'oldname'      => 'suppliertag',
             'version'      => PLUGIN_MANUFACTURERSIMPORTS_VERSION,
             'license'      => 'GPLv2+',
-            'author'       => "<a href='http://infotel.com/services/expertise-technique/glpi/'>Infotel</a>",
+            'author'       => "<a href='https://blogglpi.infotel.com'>Infotel</a>",
             'homepage'     => 'https://github.com/InfotelGLPI/manufacturersimports/',
             'requirements' => [
                'glpi' => [
