@@ -27,7 +27,8 @@
  --------------------------------------------------------------------------
  */
 
-include('../../../inc/includes.php');
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Menu;
 
 if (!isset($_GET["id"])) {
     $_GET["id"] = 0;
@@ -36,7 +37,7 @@ if (!isset($_GET["preconfig"])) {
     $_GET["preconfig"] = -1;
 }
 
-$config = new PluginManufacturersimportsConfig();
+$config = new Config();
 
 if (isset($_POST["add"])) {
     Session::checkRight("plugin_manufacturersimports", CREATE);
@@ -53,18 +54,24 @@ if (isset($_POST["add"])) {
 
     Session::checkRight("plugin_manufacturersimports", PURGE);
     $config->delete($_POST, true);
-    Html::redirect("./config.form.php");
+    Html::redirect("./config.php");
+
+} else if (isset($_POST["purge"])) {
+
+    Session::checkRight("plugin_manufacturersimports", PURGE);
+    $config->delete($_POST, true);
+    Html::redirect("./config.php");
 
 } else if (isset($_POST["retrieve_warranty"])) {
     Session::checkRight("plugin_manufacturersimports", UPDATE);
 
-    PluginManufacturersimportsConfig::retrieveOneWarranty($_POST["itemtype"], $_POST["items_id"]);
+    Config::retrieveOneWarranty($_POST["itemtype"], $_POST["items_id"]);
 
     Html::back();
 
 } else {
 
-    Html::header(__('Setup'), '', "tools", "pluginmanufacturersimportsmenu", "config");
+    Html::header(__('Setup'), '', "tools", Menu::class, "config");
 
     $config->checkGlobal(READ);
     $config->display($_GET);

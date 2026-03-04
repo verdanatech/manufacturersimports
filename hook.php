@@ -27,14 +27,17 @@
  --------------------------------------------------------------------------
  */
 
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Profile;
+use GlpiPlugin\Manufacturersimports\Menu;
+use GlpiPlugin\Manufacturersimports\Import;
+use GlpiPlugin\Manufacturersimports\Dell;
+
 function plugin_manufacturersimports_install()
 {
     global $DB;
 
-    include_once(PLUGIN_MANUFACTURERSIMPORTS_DIR . "/inc/profile.class.php");
-    include_once(PLUGIN_MANUFACTURERSIMPORTS_DIR . "/inc/config.class.php");
-
-    $migration = new Migration("3.0.5");
+    $migration = new Migration("3.0.6");
     $update    = false;
 
     //Root of SQL files for DB installation or upgrade
@@ -78,44 +81,46 @@ function plugin_manufacturersimports_install()
         $DB->runFile($sql_root . "/update-3.0.6.sql");
     }
 
-    $query = "UPDATE `glpi_plugin_manufacturersimports_configs` 
+    $query = "UPDATE `glpi_plugin_manufacturersimports_configs`
              SET `Supplier_url` = 'https://www.dell.com/support/home/product-support/servicetag/',
-                 `warranty_url` ='https://apigtwb2c.us.dell.com/PROD/sbil/eapi/v5/asset-entitlements?servicetags=', 
+                 `warranty_url` ='https://apigtwb2c.us.dell.com/PROD/sbil/eapi/v5/asset-entitlements?servicetags=',
                  `token_url`    = 'https://apigtwb2c.us.dell.com/auth/oauth/v2/token'
-             WHERE `name` ='" . PluginManufacturersimportsConfig::DELL . "'";
-    $DB->query($query);
+             WHERE `name` ='" . Config::DELL . "'";
+    $DB->doQuery($query);
 
-    $query = "UPDATE `glpi_plugin_manufacturersimports_configs` 
-             SET `Supplier_url` = 'https://www.lenovo.com/us/en/warrantyApos?serialNumber=' 
-             WHERE `name` ='" . PluginManufacturersimportsConfig::LENOVO . "'";
-    $DB->query($query);
+    $query = "UPDATE `glpi_plugin_manufacturersimports_configs`
+             SET `Supplier_url` = 'https://www.lenovo.com/us/en/warrantyApos?serialNumber='
+             WHERE `name` ='" . Config::LENOVO . "'";
+    $DB->doQuery($query);
 
     $query = "UPDATE `glpi_plugin_manufacturersimports_configs`
              SET `Supplier_url` = 'http://support.ts.fujitsu.com/Warranty/WarrantyStatus.asp?lng=com&IDNR'
-             WHERE `name` ='" . PluginManufacturersimportsConfig::FUJITSU . "'";
-    $DB->query($query);
+             WHERE `name` ='" . Config::FUJITSU . "'";
+    $DB->doQuery($query);
 
-    $query = "UPDATE `glpi_plugin_manufacturersimports_configs` 
-             SET `Supplier_url` = 'https://www.wortmann.de/fr-fr/profile/snsearch.aspx?SN=' 
-             WHERE `name` ='" . PluginManufacturersimportsConfig::WORTMANN_AG . "'";
-    $DB->query($query);
+    $query = "UPDATE `glpi_plugin_manufacturersimports_configs`
+             SET `Supplier_url` = 'https://www.wortmann.de/fr-fr/profile/snsearch.aspx?SN='
+             WHERE `name` ='" . Config::WORTMANN_AG . "'";
+    $DB->doQuery($query);
 
-    $query = "UPDATE `glpi_plugin_manufacturersimports_configs` 
+    $query = "UPDATE `glpi_plugin_manufacturersimports_configs`
              SET `Supplier_url` = 'https://support.hp.com/fr-fr/check-warranty/',
-                 `warranty_url` ='https://warranty.api.hp.com/productwarranty/v2/queries', 
+                 `warranty_url` ='https://warranty.api.hp.com/productwarranty/v2/queries',
                  `token_url`    = 'https://warranty.api.hp.com/oauth/v1/token'
-             WHERE `name` ='" . PluginManufacturersimportsConfig::HP . "'";
-    $DB->query($query);
+             WHERE `name` ='" . Config::HP . "'";
+    $DB->doQuery($query);
 
+
+    $DB->runFile($sql_root . "/update-3.1.2.sql");
 
     $cron = new CronTask;
-    if ($cron->getFromDBbyName('PluginManufacturersimportsDell', 'DataRecoveryDELL')) {
+    if ($cron->getFromDBbyName(Dell::class, 'DataRecoveryDELL')) {
         CronTask::Unregister('ManufacturersimportsDell');
     }
 
     $cron = new CronTask();
-    if (!$cron->getFromDBbyName('PluginManufacturersimportsImport', 'DataWarrantyImport')) {
-        CronTask::Register('PluginManufacturersimportsImport', 'DataWarrantyImport', WEEK_TIMESTAMP, ['state' => CronTask::STATE_DISABLE]);
+    if (!$cron->getFromDBbyName(Import::class, 'DataWarrantyImport')) {
+        CronTask::Register(Import::class, 'DataWarrantyImport', WEEK_TIMESTAMP, ['state' => CronTask::STATE_DISABLE]);
     }
 
 
@@ -124,22 +129,15 @@ function plugin_manufacturersimports_install()
             $query = "UPDATE `glpi_plugin_manufacturersimports_profiles`
                    SET `profiles_id` = '" . $data["id"] . "'
                    WHERE `id` = '" . $data["id"] . "';";
-            $DB->query($query);
+            $DB->doQuery($query);
         }
 
         $migration->dropField('glpi_plugin_manufacturersimports_profiles', 'name');
-
-        Plugin::migrateItemType(
-            [2151 => 'PluginManufacturersimportsConfig'],
-            ["glpi_savedsearches", "glpi_savedsearches_users", "glpi_displaypreferences",
-                  "glpi_documents_items", "glpi_infocoms", "glpi_logs", "glpi_items_tickets"],
-            ["glpi_plugin_manufacturersimports_logs"]
-        );
     }
 
     //Migrate profiles to the system introduced in 0.85
-    PluginManufacturersimportsProfile::initProfile();
-    PluginManufacturersimportsProfile::createFirstAccess($_SESSION['glpiactiveprofile']['id']);
+    Profile::initProfile();
+    Profile::createFirstAccess($_SESSION['glpiactiveprofile']['id']);
     //Drop old profile table : not used anymore
     $migration->dropTable('glpi_plugin_manufacturersimports_profiles');
 
@@ -148,8 +146,6 @@ function plugin_manufacturersimports_install()
 
 function plugin_manufacturersimports_uninstall()
 {
-    include_once(PLUGIN_MANUFACTURERSIMPORTS_DIR . "/inc/profile.class.php");
-    include_once(PLUGIN_MANUFACTURERSIMPORTS_DIR . "/inc/menu.class.php");
 
     $migration = new Migration("3.0.6");
     $tables    = ["glpi_plugin_manufacturersimports_configs",
@@ -169,31 +165,31 @@ function plugin_manufacturersimports_uninstall()
     }
 
     $cron = new CronTask;
-    if ($cron->getFromDBbyName('PluginManufacturersimportsDell', 'DataRecoveryDELL')) {
+    if ($cron->getFromDBbyName(Dell::class, 'DataRecoveryDELL')) {
         CronTask::Unregister('ManufacturersimportsDell');
     }
-    if ($cron->getFromDBbyName('PluginManufacturersimportsImport', 'DataWarrantyImport')) {
+    if ($cron->getFromDBbyName(Import::class, 'DataWarrantyImport')) {
         CronTask::Unregister('ManufacturersimportsImport');
     }
 
     $profileRight = new ProfileRight();
 
-    foreach (PluginManufacturersimportsProfile::getAllRights() as $right) {
+    foreach (Profile::getAllRights() as $right) {
         $profileRight->deleteByCriteria(['name' => $right['field']]);
     }
 
     //Remove rigth from $_SESSION['glpiactiveprofile'] if exists
-    PluginManufacturersimportsProfile::removeRightsFromSession();
+    Profile::removeRightsFromSession();
 
     //Remove entries in GLPI's menu and breadcrumb
-    PluginManufacturersimportsMenu::removeRightsFromSession();
+    Menu::removeRightsFromSession();
     return true;
 }
 
 function plugin_manufacturersimports_postinit()
 {
-    foreach (PluginManufacturersimportsConfig::getTypes(true) as $type) {
-        CommonGLPI::registerStandardTab($type, 'PluginManufacturersimportsConfig');
+    foreach (Config::getTypes(true) as $type) {
+        CommonGLPI::registerStandardTab($type, Config::class);
     }
 }
 
