@@ -1,9 +1,10 @@
 <?php
+
 /*
  * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
  Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ Copyright (C) 2015-2026 by the Manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
@@ -27,18 +28,25 @@
  --------------------------------------------------------------------------
  */
 
-include('../../../inc/includes.php');
+use GlpiPlugin\Manufacturersimports\Log;
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Menu;
+use GlpiPlugin\Manufacturersimports\PostImport;
 
 header("Content-Type: text/html; charset=UTF-8");
 Html::header_nocache();
 
 Session::checkLoginUser();
 
-$log = new PluginManufacturersimportsLog();
-$config = new PluginManufacturersimportsConfig();
+$log = new Log();
+$config = new Config();
 
-Html::header(_n('Suppliers import', 'Suppliers imports', 2, 'manufacturersimports'),
-    $_SERVER['PHP_SELF'], "tools", "pluginmanufacturersimportsmenu");
+Html::header(
+    _n('Suppliers import', 'Suppliers imports', 2, 'manufacturersimports'),
+    $_SERVER['PHP_SELF'],
+    "tools",
+    Menu::class
+);
 
 $config->checkGlobal(UPDATE);
 
@@ -48,7 +56,7 @@ if (isset($_POST["action"])
     && count($_POST["item"])) {
     switch ($_POST["action"]) {
         case "import":
-            PluginManufacturersimportsPostImport::massiveimport($_POST);
+            PostImport::massiveimport($_POST);
             break;
 
         case "reinit_once":
@@ -58,14 +66,15 @@ if (isset($_POST["action"])
                 }
             }
             Session::addMessageAfterRedirect(__('Operation successful'));
-            Html::redirect($_SERVER['HTTP_REFERER'] . "?itemtype=" . $_POST["itemtype"] .
-                "&manufacturers_id=" . $_POST["manufacturers_id"] .
-                "&start=" . $_POST["start"] .
-                "&imported=" . $_POST["imported"]);
+            Html::redirect(PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . "/front/import.php?itemtype=" .
+                urlencode($_POST["itemtype"]) .
+                "&manufacturers_id=" . (int) $_POST["manufacturers_id"] .
+                "&start=" . (int) $_POST["start"] .
+                "&imported=" . (int) $_POST["imported"]);
             break;
     }
 } else {
-   echo "<div class='alert alert-important alert-warning d-flex'>";
+    echo "<div class='alert alert-important alert-warning d-flex'>";
     echo "<b>" . __('No selected element or badly defined operation') . "</b></div>";
 }
 

@@ -1,9 +1,10 @@
 <?php
+
 /*
  * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
  Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ Copyright (C) 2015-2026 by the Manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
@@ -27,15 +28,16 @@
  --------------------------------------------------------------------------
  */
 
-include ('../../../inc/includes.php');
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Menu;
 
 Session::checkRight("config", UPDATE);
 
 if (Plugin::isPluginActive("manufacturersimports")) {
-   Html::header(__('Setup'), '', "tools", "pluginmanufacturersimportsmenu", "config");
-   Search::show("PluginManufacturersimportsConfig");
+   Html::header(__('Setup'), '', "tools", Menu::class, "config");
+   Search::show(Config::class);
 } else {
-   Html::header(__('Setup'), '', "config", "plugins");
+   Html::header(__('Setup'), '', "config", "plugin");
    echo "<div class='alert alert-important alert-warning d-flex'>";
    echo "<b>".__('Please activate the plugin', 'manufacturersimports')."</b></div>";
 }

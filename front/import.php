@@ -1,9 +1,10 @@
 <?php
+
 /*
  * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
  Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ Copyright (C) 2015-2026 by the Manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
@@ -27,25 +28,30 @@
  --------------------------------------------------------------------------
  */
 
-include('../../../inc/includes.php');
+use Glpi\Exception\Http\AccessDeniedHttpException;
+use GlpiPlugin\Manufacturersimports\Menu;
+use GlpiPlugin\Manufacturersimports\PreImport;
 
+$preimport = new PreImport();
+if (!$preimport->canView() && !Session::haveRight("config", UPDATE)) {
+    throw new AccessDeniedHttpException();
+}
 
 Html::header(
-    PluginManufacturersimportsPreImport::getTypeName(),
+    PreImport::getTypeName(),
     '',
     "tools",
-    "pluginmanufacturersimportsmenu"
+    Menu::class
 );
 
-$preimport = new PluginManufacturersimportsPreImport();
 if ($preimport->canView() || Session::haveRight("config", UPDATE)) {
     $values = $_GET;
     if (isset($_POST["typechoice"])) {
         $values = $_POST;
     }
-    PluginManufacturersimportsPreImport::searchForm($values);
-    PluginManufacturersimportsPreImport::seePreImport($values);
+    PreImport::searchForm($values);
+    PreImport::seePreImport($values);
 } else {
-    Html::displayRightError();
+    throw new AccessDeniedHttpException();
 }
 Html::footer();

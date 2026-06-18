@@ -1,9 +1,10 @@
 <?php
+
 /*
  * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
  Manufacturersimports plugin for GLPI
- Copyright (C) 2009-2022 by the Manufacturersimports Development Team.
+ Copyright (C) 2015-2026 by the Manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
@@ -27,12 +28,19 @@
  --------------------------------------------------------------------------
  */
 
-define('PLUGIN_MANUFACTURERSIMPORTS_VERSION', '3.0.9');
+define('PLUGIN_MANUFACTURERSIMPORTS_VERSION', '3.1.5');
+
+global $CFG_GLPI;
+
+use Glpi\Plugin\Hooks;
+use GlpiPlugin\Manufacturersimports\Profile;
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Menu;
 
 if (!defined("PLUGIN_MANUFACTURERSIMPORTS_DIR")) {
     define("PLUGIN_MANUFACTURERSIMPORTS_DIR", Plugin::getPhpDir("manufacturersimports"));
-    define("PLUGIN_MANUFACTURERSIMPORTS_NOTFULL_DIR", Plugin::getPhpDir("manufacturersimports", false));
-    define("PLUGIN_MANUFACTURERSIMPORTS_WEBDIR", Plugin::getWebDir("manufacturersimports"));
+    $root = $CFG_GLPI['root_doc'] . '/plugins/manufacturersimports';
+    define("PLUGIN_MANUFACTURERSIMPORTS_WEBDIR", $root);
 }
 
 // Init the hooks of the plugins -Needed
@@ -40,40 +48,38 @@ function plugin_init_manufacturersimports()
 {
     global $PLUGIN_HOOKS, $CFG_GLPI;
 
-    $PLUGIN_HOOKS['csrf_compliant']['manufacturersimports'] = true;
-
     if (Plugin::isPluginActive('manufacturersimports')
         && Session::getLoginUserID()) {
+
         Plugin::registerClass(
-            'PluginManufacturersimportsProfile',
+            Profile::class,
             ['addtabon' => 'Profile']
         );
 
         //Display menu entry only if user has right to see it !
         if (Session::haveRight('plugin_manufacturersimports', READ)) {
-            $PLUGIN_HOOKS["menu_toadd"]['manufacturersimports']
-               = ['tools' => 'PluginManufacturersimportsMenu'];
+            $PLUGIN_HOOKS[Hooks::MENU_TOADD]['manufacturersimports']
+               = ['tools' => Menu::class];
         }
 
         if (Session::haveRight('config', UPDATE)) {
-            $PLUGIN_HOOKS['config_page']['manufacturersimports']
-                                                                        = 'front/config.php';
-            $PLUGIN_HOOKS['use_massive_action']['manufacturersimports'] = 1;
+            $PLUGIN_HOOKS[Hooks::CONFIG_PAGE]['manufacturersimports'] = 'front/config.php';
+            $PLUGIN_HOOKS[Hooks::USE_MASSIVE_ACTION]['manufacturersimports'] = 1;
         }
 
         // End init, when all types are registered
-        $PLUGIN_HOOKS['post_init']['manufacturersimports']
+        $PLUGIN_HOOKS[Hooks::POST_INIT]['manufacturersimports']
            = 'plugin_manufacturersimports_postinit';
 
-        $PLUGIN_HOOKS['infocom']['manufacturersimports']       = ['PluginManufacturersimportsConfig', 'showForInfocom'];
-        $PLUGIN_HOOKS['pre_show_item']['manufacturersimports'] = ['PluginManufacturersimportsConfig', 'showItemImport'];
+        $PLUGIN_HOOKS[Hooks::INFOCOM]['manufacturersimports']       = [Config::class, 'showForInfocom'];
+        $PLUGIN_HOOKS[Hooks::PRE_SHOW_ITEM]['manufacturersimports'] = [Config::class, 'showItemImport'];
     }
 
     if (isset($_SESSION['glpiactiveprofile']['interface'])
         && $_SESSION['glpiactiveprofile']['interface'] == 'central') {
         // Add specific files to add to the header : javascript or css
-        $PLUGIN_HOOKS['add_css']['manufacturersimports'] = [
-           "manufacturersimports.css",
+        $PLUGIN_HOOKS[Hooks::ADD_CSS]['manufacturersimports'] = [
+            "manufacturersimports.css",
         ];
     }
 }
@@ -87,20 +93,20 @@ function plugin_version_manufacturersimports()
         2,
         'manufacturersimports'
     ),
-            'oldname'      => 'suppliertag',
-            'version'      => PLUGIN_MANUFACTURERSIMPORTS_VERSION,
-            'license'      => 'GPLv2+',
-            'author'       => "<a href='https://blogglpi.infotel.com'>Infotel</a>",
-            'homepage'     => 'https://github.com/InfotelGLPI/manufacturersimports/',
-            'requirements' => [
-               'glpi' => [
-                  'min' => '10.0',
-                  'max' => '11.0',
-                  'dev' => false
-               ],
-               'php'  => [
-                  'exts' => ['soap', 'curl', 'json'],
-               ]
-            ]
+        'oldname'      => 'suppliertag',
+        'version'      => PLUGIN_MANUFACTURERSIMPORTS_VERSION,
+        'license'      => 'GPLv2+',
+        'author'       => "<a href='https://blogglpi.infotel.com'>Infotel</a>, Xavier CAILLAUD",
+        'homepage'     => 'https://github.com/InfotelGLPI/manufacturersimports/',
+        'requirements' => [
+            'glpi' => [
+                'min' => '11.0',
+                'max' => '12.0',
+                'dev' => false,
+            ],
+            'php'  => [
+                'exts' => ['soap', 'curl', 'json'],
+            ],
+        ],
     ];
 }
