@@ -1,0 +1,78 @@
+{#
+ -------------------------------------------------------------------------
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+
+ https://github.com/InfotelGLPI/manufacturersimports
+ -------------------------------------------------------------------------
+
+ LICENSE
+
+ This file is part of manufacturersimports.
+
+ manufacturersimports is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 3 of the License, or
+ (at your option) any later version.
+
+ manufacturersimports is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ --------------------------------------------------------------------------
+ #}
+
+{% if no_results %}
+    <div class="alert alert-info text-center">
+        <strong>{{ __('No device finded', 'manufacturersimports') }}</strong>
+    </div>
+{% else %}
+
+    {# Top pager #}
+    {% do call('GlpiPlugin\\Manufacturersimports\\PreImport::printPager',
+        [start, numrows, target, parameters, itemtype]) %}
+
+    <form method="post" name="massiveaction_form" id="massiveaction_form"
+          action="{{ plugin_webdir }}/front/massiveaction.php">
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+
+        {{ include('components/datatable.html.twig', {
+            'columns':            columns,
+            'formatters':         formatters,
+            'entries':            entries,
+            'total_number':       total_number,
+            'filtered_number':    filtered_number,
+            'showmassiveactions': false,
+            'nofilter':           true,
+            'nosort':             true,
+            'is_tab':             false
+        }) }}
+
+        <div class="mt-2 ms-2">
+            {{ __('Total number of devices to import %s', 'manufacturersimports')|format(total_devices) }}
+        </div>
+
+        {% if canedit %}
+            {% if list_limit < max_input_vars %}
+                {% do call('GlpiPlugin\\Manufacturersimports\\PreImport::openArrowMassives',
+                    ['massiveaction_form', false]) %}
+                {% do call('GlpiPlugin\\Manufacturersimports\\PreImport::dropdownMassiveAction',
+                    [comp_id, itemtype, manufacturers_id, start, imported]) %}
+                {% do call('GlpiPlugin\\Manufacturersimports\\PreImport::closeArrowMassives', [[]]) %}
+            {% else %}
+                <div class="alert alert-warning">
+                    {{ __('Selection too large, massive action disabled.') }}
+                </div>
+            {% endif %}
+        {% endif %}
+
+    </form>
+
+    {# Bottom pager #}
+    {% do call('GlpiPlugin\\Manufacturersimports\\PreImport::printPager',
+        [start, numrows, target, parameters, itemtype]) %}
+
+{% endif %}

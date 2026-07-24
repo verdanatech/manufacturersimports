@@ -1,32 +1,33 @@
 <?php
+
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
+use Glpi\Exception\Http\AccessDeniedHttpException;
 use GlpiPlugin\Manufacturersimports\Log;
 use GlpiPlugin\Manufacturersimports\Config;
 use GlpiPlugin\Manufacturersimports\Menu;
@@ -55,16 +56,42 @@ if (isset($_POST["action"])
     && count($_POST["item"])) {
     switch ($_POST["action"]) {
         case "import":
+            $itemtype = $_POST["itemtype"];
+            // Only the itemtypes this plugin handles are acceptable here.
+            if (!in_array($itemtype, Config::$types, true)) {
+                throw new AccessDeniedHttpException();
+            }
+            foreach ($_POST["item"] as $key => $val) {
+                if ($val == 1) {
+                    $item = getItemForItemtype($itemtype);
+                    // Enforce the entity perimeter on each targeted item before
+                    // rendering the progress page (the worker re-checks too).
+                    if (!$item || !$item->can((int) $key, UPDATE)) {
+                        throw new AccessDeniedHttpException();
+                    }
+                }
+            }
             PostImport::massiveimport($_POST);
             break;
 
         case "reinit_once":
+            $itemtype = $_POST["itemtype"];
+            // Only the itemtypes this plugin handles are acceptable here.
+            if (!in_array($itemtype, Config::$types, true)) {
+                throw new AccessDeniedHttpException();
+            }
             foreach ($_POST["item"] as $key => $val) {
                 if ($val == 1) {
-                    $log->reinitializeImport($_POST["itemtype"], $key);
+                    $item = getItemForItemtype($itemtype);
+                    // Enforce the entity perimeter on each targeted item: the
+                    // global plugin right does not prove access to THIS item.
+                    if (!$item || !$item->can((int) $key, UPDATE)) {
+                        throw new AccessDeniedHttpException();
+                    }
+                    $log->reinitializeImport($itemtype, $key);
                 }
             }
-            Session::addMessageAfterRedirect(__('Operation successful'));
+            Session::addMessageAfterRedirect(__('Operation successful', 'manufacturersimports'));
             Html::redirect(PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . "/front/import.php?itemtype=" .
                 urlencode($_POST["itemtype"]) .
                 "&manufacturers_id=" . (int) $_POST["manufacturers_id"] .
@@ -74,7 +101,7 @@ if (isset($_POST["action"])
     }
 } else {
     echo "<div class='alert alert-important alert-warning d-flex'>";
-    echo "<b>" . __('No selected element or badly defined operation') . "</b></div>";
+    echo "<b>" . __('No selected element or badly defined operation', 'manufacturersimports') . "</b></div>";
 }
 
 Html::footer();

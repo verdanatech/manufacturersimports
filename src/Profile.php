@@ -1,34 +1,35 @@
 <?php
+
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
 namespace GlpiPlugin\Manufacturersimports;
 
+use Glpi\Application\View\TemplateRenderer;
 use GlpiPlugin\Manufacturersimports\Config;
 use CommonGLPI;
 use DbUtils;
@@ -65,18 +66,50 @@ class Profile extends \Profile
     }
 
 
-    public static function displayTabContentForItem(CommonGLPI $item, $tabnum = 1, $withtemplate = 0)
-    {
-        global $CFG_GLPI;
+//    public static function displayTabContentForItem(CommonGLPI $item, $tabnum = 1, $withtemplate = 0)
+//    {
+//        global $CFG_GLPI;
+//
+//        if ($item->getType() == 'Profile') {
+//            $prof = new self();
+//            self::addDefaultProfileInfos(
+//                $item->getField('id'),
+//                ['plugin_manufacturersimports' => 0]
+//            );
+//            $prof->showForm($item->getField('id'));
+//        }
+//        return true;
+//    }
 
-        if ($item->getType() == 'Profile') {
-            $prof = new self();
-            self::addDefaultProfileInfos(
-                $item->getField('id'),
-                ['plugin_manufacturersimports' => 0]
-            );
-            $prof->showForm($item->getField('id'));
+    /**
+     * @param CommonGLPI $item
+     * @param int $tabnum
+     * @param int $withtemplate
+     *
+     * @return bool
+     */
+    public static function displayTabContentForItem(
+        CommonGLPI $item,
+        $tabnum = 1,
+        $withtemplate = 0
+    ) {
+        if (!$item instanceof \Profile || !self::canView()) {
+            return false;
         }
+
+        $profile = new \Profile();
+        $profile->getFromDB($item->getID());
+
+        $rights = self::getAllRights(true);
+
+        $twig = TemplateRenderer::getInstance();
+        $twig->display('@manufacturersimports/profile.html.twig', [
+            'id' => $item->getID(),
+            'profile' => $profile,
+            'title' => self::getTypeName(Session::getPluralNumber()),
+            'rights' => $rights,
+        ]);
+
         return true;
     }
 
@@ -233,41 +266,5 @@ class Profile extends \Profile
                 $_SESSION['glpiactiveprofile'][$right] = $value;
             }
         }
-    }
-
-    /**
-     * Show profile form
-     *
-     * @param $items_id integer id of the profile
-     * @param $target value url of target
-     *
-     * @return nothing
-     **/
-    public function showForm($profiles_id = 0, $openform = true, $closeform = true)
-    {
-        echo "<div class='firstbloc'>";
-        if (($canedit = Session::haveRightsOr(self::$rightname, [CREATE, UPDATE, PURGE]))
-            && $openform) {
-            $profile = new \Profile();
-            echo "<form method='post' action='" . $profile->getFormURL() . "'>";
-        }
-
-        $profile = new \Profile();
-        $profile->getFromDB($profiles_id);
-
-        $rights = $this->getAllRights();
-        $profile->displayRightsChoiceMatrix($rights, ['canedit'       => $canedit,
-                                                      'default_class' => 'tab_bg_2',
-                                                      'title'         => __('General')]);
-
-        if ($canedit
-            && $closeform) {
-            echo "<div class='center'>";
-            echo Html::hidden('id', ['value' => $profiles_id]);
-            echo Html::submit(_sx('button', 'Save'), ['name' => 'update', 'class' => 'btn btn-primary']);
-            echo "</div>\n";
-            Html::closeForm();
-        }
-        echo "</div>";
     }
 }

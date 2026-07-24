@@ -1,29 +1,29 @@
 <?php
+
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2009-2022 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
@@ -31,7 +31,7 @@ use GlpiPlugin\Manufacturersimports\Config;
 use GlpiPlugin\Manufacturersimports\Profile;
 use GlpiPlugin\Manufacturersimports\Menu;
 use GlpiPlugin\Manufacturersimports\Import;
-use GlpiPlugin\Manufacturersimports\Dell;
+use GlpiPlugin\Manufacturersimports\Manufacturers\Dell;
 
 function plugin_manufacturersimports_install()
 {
@@ -79,6 +79,27 @@ function plugin_manufacturersimports_install()
     }
     if ($DB->tableExists("glpi_plugin_manufacturersimports_models")) {
         $DB->runFile($sql_root . "/update-3.0.6.sql");
+    }
+
+    // One-shot migration: encrypt any pre-existing plaintext secrets. Idempotent —
+    // rows already encrypted carry the Config::SECRET_PREFIX marker and are skipped.
+    if ($DB->fieldExists("glpi_plugin_manufacturersimports_configs", "supplier_secret")) {
+        foreach ($DB->request(['FROM' => 'glpi_plugin_manufacturersimports_configs']) as $row) {
+            $changes = [];
+            foreach (['supplier_key', 'supplier_secret'] as $secret_field) {
+                $value = (string) ($row[$secret_field] ?? '');
+                if ($value !== '' && !str_starts_with($value, 'crypt:')) {
+                    $changes[$secret_field] = Config::encryptSecret($value);
+                }
+            }
+            if (!empty($changes)) {
+                $DB->update(
+                    'glpi_plugin_manufacturersimports_configs',
+                    $changes,
+                    ['id' => (int) $row['id']]
+                );
+            }
+        }
     }
 
     $DB->update('glpi_plugin_manufacturersimports_configs', [

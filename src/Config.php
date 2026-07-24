@@ -1,30 +1,29 @@
 <?php
 
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
@@ -34,6 +33,9 @@ use Ajax;
 use CommonDBTM;
 use DbUtils;
 use Dropdown;
+use Glpi\Application\View\TemplateRenderer;
+use Glpi\Exception\Http\AccessDeniedHttpException;
+use GLPIKey;
 use Html;
 use Session;
 use Toolbox;
@@ -53,13 +55,179 @@ class Config extends CommonDBTM
         'Peripheral', 'Printer'];
     public $dohistory = true;
 
+    /**
+     * Secret fields stored encrypted at rest. Kept out of the history log so the
+     * ciphertext never lands in glpi_logs.
+     */
+    public $history_blacklist = ['supplier_key', 'supplier_secret'];
+
+    /**
+     * Marker prefixing every GLPIKey-encrypted secret. Lets us tell an encrypted
+     * value apart from a legacy plaintext one without ambiguity, so decryption is
+     * self-migrating and never emits sodium warnings on old rows.
+     */
+    private const SECRET_PREFIX = 'crypt:';
+
+    /**
+     * Encrypt a secret value for storage. Empty values stay empty.
+     *
+     * @param string $value plaintext secret
+     *
+     * @return string prefixed ciphertext, or '' when empty
+     */
+    public static function encryptSecret(string $value): string
+    {
+        if ($value === '') {
+            return '';
+        }
+        return self::SECRET_PREFIX . (new GLPIKey())->encrypt($value);
+    }
+
+    /**
+     * Decrypt a stored secret. Values written before encryption was introduced
+     * (no prefix) are returned as-is so existing configurations keep working.
+     *
+     * @param string|null $value stored value
+     *
+     * @return string plaintext secret
+     */
+    public static function decryptSecret(?string $value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        if (!str_starts_with($value, self::SECRET_PREFIX)) {
+            // Legacy plaintext row, not yet migrated.
+            return $value;
+        }
+        return (string) (new GLPIKey())->decrypt(substr($value, strlen(self::SECRET_PREFIX)));
+    }
+
+    /**
+     * Validate that a URL is safe to fetch server-side (SSRF mitigation).
+     *
+     * Only https is accepted and the host must not resolve to a private,
+     * loopback, link-local or otherwise reserved IP range — this blocks
+     * requests to internal services (localhost, 169.254.169.254, 10.0.0.0/8...).
+     * Callers must additionally disable HTTP redirect following so a public host
+     * cannot bounce the request to an internal target.
+     *
+     * @param string $url URL to validate
+     *
+     * @return bool true when the URL is safe to reach out to
+     */
+    public static function isSafeApiUrl(string $url): bool
+    {
+        return self::resolveSafeIps($url) !== false;
+    }
+
+    /**
+     * Resolve a URL's host and return the list of IPs it maps to, but only when
+     * every one of them is public. Returns false when the URL is not https, is
+     * malformed, cannot be resolved, or resolves to any private/reserved range.
+     *
+     * @param string $url URL to validate
+     *
+     * @return string[]|false Validated public IPs, or false when unsafe
+     */
+    private static function resolveSafeIps(string $url)
+    {
+        $url = trim($url);
+        if ($url === '' || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        $parts = parse_url($url);
+        if ($parts === false
+            || ($parts['scheme'] ?? '') !== 'https'
+            || empty($parts['host'])) {
+            return false;
+        }
+
+        $host = $parts['host'];
+
+        // Collect every IP the host maps to.
+        $ips = [];
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            $ips[] = $host;
+        } else {
+            $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+            if (is_array($records)) {
+                foreach ($records as $record) {
+                    if (isset($record['ip'])) {
+                        $ips[] = $record['ip'];
+                    } elseif (isset($record['ipv6'])) {
+                        $ips[] = $record['ipv6'];
+                    }
+                }
+            }
+        }
+
+        if (empty($ips)) {
+            // Host could not be resolved: refuse rather than let curl resolve it.
+            return false;
+        }
+
+        foreach ($ips as $ip) {
+            if (filter_var(
+                $ip,
+                FILTER_VALIDATE_IP,
+                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+            ) === false) {
+                return false;
+            }
+        }
+
+        return $ips;
+    }
+
+    /**
+     * Build CURLOPT_RESOLVE entries pinning the URL host to the exact IP(s)
+     * validated by resolveSafeIps(). This closes the DNS-rebinding TOCTOU window:
+     * without it, curl performs its own second resolution and could reach an
+     * internal IP that looked public at validation time.
+     *
+     * Returns [] when the URL is unsafe or when a proxy is configured (the proxy
+     * resolves the host itself, so client-side pinning would have no effect).
+     *
+     * @param string $url URL to fetch server-side
+     *
+     * @return string[] CURLOPT_RESOLVE entries, e.g. ['api.example.com:443:203.0.113.5']
+     */
+    public static function getPinnedResolve(string $url): array
+    {
+        global $CFG_GLPI;
+
+        if (!empty($CFG_GLPI['proxy_name'])) {
+            return [];
+        }
+
+        $ips = self::resolveSafeIps($url);
+        if ($ips === false) {
+            return [];
+        }
+
+        $parts = parse_url($url);
+        $host  = $parts['host'] ?? '';
+        $port  = $parts['port'] ?? 443;
+
+        $entries = [];
+        foreach ($ips as $ip) {
+            // Bracket IPv6 literals as required by the HOST:PORT:ADDRESS format.
+            $addr      = (strpos($ip, ':') !== false) ? '[' . $ip . ']' : $ip;
+            $entries[] = $host . ':' . $port . ':' . $addr;
+        }
+
+        return $entries;
+    }
+
     //Manufacturers constants
     public const DELL        = "Dell";
     public const LENOVO      = "Lenovo";
     public const HP          = "HP";
     public const FUJITSU     = "Fujitsu";
     public const TOSHIBA     = "Toshiba";
-    public const WORTMANN_AG = "Wortmann_AG";
+    public const WORTMANN_AG = "Wortmann_ag";
 
     public static function getTypeName($nb = 0)
     {
@@ -95,7 +263,7 @@ class Config extends CommonDBTM
             case self::LENOVO:
             case self::TOSHIBA:
             case self::WORTMANN_AG:
-                $supplierclass = "GlpiPlugin\Manufacturersimports\\".$suppliername;
+                $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\".$suppliername;
                 $supplier                     = new $supplierclass();
                 $infos                        = $supplier->getSupplierInfo();
                 $this->fields["name"]         = $infos["name"];
@@ -307,149 +475,51 @@ class Config extends CommonDBTM
             }
         }
 
-        echo "<table class='tab_cadre_fixe'>";
-        echo "<tr>";
-        echo "<td class='tab_bg_2 center' colspan='2'>" . __('Preconfiguration') . "&nbsp;";
+        $preconfig      = (int) ($_GET['preconfig'] ?? -1);
+        $preconfig_rand = mt_rand();
+        $supplier_name  = $this->fields['name'] ?? '';
 
-        $opt    = ['value' => $_GET['preconfig']];
-        $rand   = self::dropdownSupplier('supplier', $opt);
-        $params = ['supplier' => '__VALUE__'];
+        $test_field  = '';
+        $is_api_test = false;
+        $test_label  = '';
+        $test_icon   = '';
+        $row_label   = '';
+        $base_url    = '';
+        $test_mode   = '';
 
-        Ajax::updateItemOnSelectEvent(
-            "dropdown_supplier$rand",
-            "show_preconfig",
-            "../ajax/dropdownSuppliers.php",
-            $params
-        );
-        echo "<span id='show_preconfig'>";
-        echo "</span>";
-        echo "</td>";
-        echo "</tr>";
-        echo "</table>";
-
-        if ($_GET['preconfig'] == -1 && $ID <= 0) {
-            $style = "style='display:none;'";
-        } else {
-            $style = "style='display:block;'";
-        }
-        echo "<div id='show_form' $style>";
-
-        $this->initForm($ID, $options);
-        $this->showFormHeader($options);
-
-        echo "<tr>";
-        echo "<td class='tab_bg_2 center'>" . __('Name') . "</td>";
-        echo "<td class='tab_bg_2 left'>";
-        echo htmlescape($this->fields["name"]);
-        echo Html::hidden('name', ['value' => $this->fields["name"]]);
-        echo "</td>";
-
-        echo "<td class='tab_bg_2 center'>" . __('Manufacturer') . "</td>";
-        echo "<td class='tab_bg_2 left'>";
-        Dropdown::show(
-            'Manufacturer',
-            ['name'  => "manufacturers_id",
-                'value' => $this->fields["manufacturers_id"]]
-        );
-        echo "</td>";
-        echo "</tr>";
-
-        echo "<tr>";
-        echo "<td class='tab_bg_2 center' colspan='2'>" . __('Manufacturer web address', 'manufacturersimports') . "</td>";
-        echo "<td class='tab_bg_2 left' colspan='2'>";
-        echo Html::input('supplier_url', ['value' => $this->fields["supplier_url"], 'size' => 75]);
-        echo "</td>";
-        echo "</tr>";
-
-        if ($this->fields["name"] == self::DELL || $this->fields["name"] == self::HP) {
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Access token API address', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            echo Html::input('token_url', ['value' => $this->fields["token_url"], 'size' => 75]);
-            echo "</td>";
-            echo "</tr>";
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Warranty API address', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            echo Html::input('warranty_url', ['value' => $this->fields["warranty_url"], 'size' => 75]);
-            echo "</td>";
-            echo "</tr>";
+        $supplier_class = "GlpiPlugin\\Manufacturersimports\\Manufacturers\\" . $supplier_name;
+        if ($supplier_name !== '' && class_exists($supplier_class)) {
+            $supplier_obj = new $supplier_class();
+            $test_field   = $supplier_obj->getTestUrlField();
+            $is_api_test  = ($test_field === 'token_url');
+            $test_label   = $is_api_test
+                ? __('Test connection', 'manufacturersimports')
+                : __('Test warranty page', 'manufacturersimports');
+            $test_icon    = $is_api_test ? 'ti-plug-connected' : 'ti-world-www';
+            $row_label    = $is_api_test
+                ? __('API connection test', 'manufacturersimports')
+                : __('Warranty page test', 'manufacturersimports');
+            $base_url     = $this->fields[$test_field] ?? '';
+            $test_mode    = $is_api_test ? 'oauth' : 'head';
         }
 
-        echo "<tr>";
-        echo "<td class='tab_bg_2 center' colspan='2'>" . __('Default supplier attached', 'manufacturersimports') . "</td>";
-        echo "<td class='tab_bg_2 left' colspan='2'>";
-        Dropdown::show('Supplier', ['name'  => "suppliers_id",
-            'value' => $this->fields["suppliers_id"]]);
-        echo "</td>";
-        echo "</tr>";
-
-        if ($this->fields["name"] == self::FUJITSU) {
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>"
-                 . __(
-                     'New warranty affected by default (Replace if 0)',
-                     'manufacturersimports'
-                 ) . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            Dropdown::showNumber("warranty_duration", ['value' => $this->fields["warranty_duration"],
-                'min'   => 0,
-                'max'   => 120]);
-            echo "</td>";
-            echo "</tr>";
-        } else {
-            echo Html::hidden('warranty_duration', ['value' => 0]);
-        }
-        if ($this->fields["name"] == self::DELL || $this->fields["name"] == self::HP) {
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Client id', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            echo Html::input('supplier_key', ['value' => $this->fields["supplier_key"], 'size' => 75]);
-            echo "</td>";
-            echo "</tr>";
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Client secret', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            echo Html::input('supplier_secret', ['value' => $this->fields["supplier_secret"], 'size' => 75]);
-            echo "</td>";
-            echo "</tr>";
-        } elseif ($this->fields["name"] == self::LENOVO) {
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Client id', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            echo Html::input('supplier_key', ['value' => $this->fields["supplier_key"], 'size' => 75]);
-            echo "</td>";
-            echo "</tr>";
-        } else {
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Auto add of document', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            Dropdown::showYesNo("document_adding", $this->fields["document_adding"]);
-            echo "</td>";
-            echo "</tr>";
-
-            echo "<tr>";
-            echo "<td class='tab_bg_2 center' colspan='2'>" . __('Section for document records', 'manufacturersimports') . "</td>";
-            echo "<td class='tab_bg_2 left' colspan='2'>";
-            Dropdown::show('DocumentCategory', ['name'  => "documentcategories_id",
-                'value' => $this->fields["documentcategories_id"]]);
-            echo "</td>";
-            echo "</tr>";
-        }
-        echo "<tr>";
-        echo "<td class='tab_bg_2 center' colspan='2'>" . __('Add a comment line', 'manufacturersimports') . "</td>";
-        echo "<td class='tab_bg_2 left' colspan='2'>";
-        Dropdown::showYesNo("comment_adding", $this->fields["comment_adding"]);
-        echo "</td>";
-        echo "</tr>";
-
-        $this->showFormButtons($options);
-
-        echo "<div class='center'>";
-        echo "<a class='submit btn btn-primary' href='" . self::getFormURL(true) . "'>";
-        echo __('Back');
-        echo "</a>";
-        echo "</div>";
+        TemplateRenderer::getInstance()->display('@manufacturersimports/config_form.html.twig', [
+            'item'          => $this,
+            'params'        => $options,
+            'preconfig'     => $preconfig,
+            'preconfig_rand' => $preconfig_rand,
+            'is_new'        => ($ID <= 0),
+            'test_field'    => $test_field,
+            'is_api_test'   => $is_api_test,
+            'test_label'    => $test_label,
+            'test_icon'     => $test_icon,
+            'row_label'     => $row_label,
+            'base_url'      => $base_url,
+            'test_mode'     => $test_mode,
+            'action_url'    => self::getFormURL(true),
+            'supplier_key_value'    => self::decryptSecret($this->fields['supplier_key'] ?? ''),
+            'supplier_secret_value' => self::decryptSecret($this->fields['supplier_secret'] ?? ''),
+        ]);
 
         return true;
     }
@@ -462,7 +532,20 @@ class Config extends CommonDBTM
             'documentcategories_id', 'document_adding', 'comment_adding',
             'warranty_duration', 'entities_id', 'is_recursive',
         ];
-        return array_intersect_key($input, array_flip($allowed));
+        $input = array_intersect_key($input, array_flip($allowed));
+
+        $input += [
+            'supplier_key'    => '',
+            'supplier_secret' => '',
+            'token_url'       => '',
+            'warranty_url'    => '',
+        ];
+
+        // Encrypt secrets before they reach the database.
+        $input['supplier_key']    = self::encryptSecret((string) $input['supplier_key']);
+        $input['supplier_secret'] = self::encryptSecret((string) $input['supplier_secret']);
+
+        return $input;
     }
 
     public function prepareInputForUpdate($input)
@@ -473,7 +556,25 @@ class Config extends CommonDBTM
             'documentcategories_id', 'document_adding', 'comment_adding',
             'warranty_duration', 'entities_id', 'is_recursive',
         ];
-        return array_intersect_key($input, array_flip($allowed));
+        $input = array_intersect_key($input, array_flip($allowed));
+
+        // Secrets arrive as plaintext from the form. Skip the field when it is
+        // unchanged (compared against the decrypted stored value), otherwise
+        // re-encrypt the new value.
+        foreach (['supplier_key', 'supplier_secret'] as $secret_field) {
+            if (!array_key_exists($secret_field, $input)) {
+                continue;
+            }
+            $submitted = (string) $input[$secret_field];
+            $stored    = self::decryptSecret($this->fields[$secret_field] ?? '');
+            if ($submitted === $stored) {
+                unset($input[$secret_field]);
+            } else {
+                $input[$secret_field] = self::encryptSecret($submitted);
+            }
+        }
+
+        return $input;
     }
 
     /**
@@ -652,7 +753,7 @@ class Config extends CommonDBTM
             $configID = Config::checkManufacturerID($item->getType(), $item->getID());
             $config   = new Config();
             $config->getFromDB($configID);
-            $supplierkey = (isset($config->fields["supplier_key"])) ? $config->fields["supplier_key"] : false;
+            $supplierkey = (isset($config->fields["supplier_key"])) ? self::decryptSecret($config->fields["supplier_key"]) : false;
             $supplierurl = (isset($config->fields["supplier_url"])) ? $config->fields["supplier_url"] : false;
 
             if ($suppliername == Config::LENOVO) {
@@ -660,39 +761,37 @@ class Config extends CommonDBTM
             } else {
                 $url = PreImport::selectSupplier($suppliername, $supplierurl, $item->fields['serial'], $otherserial, $supplierkey);
             }
-            echo "<table class='tab_cadre_fixe'>";
-            echo "<tr>";
-            echo "<th colspan='4'>" . PreImport::getTypeName(2) . "</th>";
-            echo "</tr>";
-
-            echo "<tr class='tab_bg_1'>";
-            echo "<td >";
-            echo _n('Link', 'Links', 1);
-            echo "</td>";
-            echo "<td >";
-            echo "<a href='" . $url . "' target='_blank'>" . __('Manufacturer information', 'manufacturersimports') . "</a>";
-            echo "</td>";
-            echo "<td colspan='2' class='center'>";
-            $target = Config::getFormUrl(true);
-            Html::showSimpleForm(
-                $target,
-                'retrieve_warranty',
-                _sx('button', 'Retrieve warranty from manufacturer', 'manufacturersimports'),
-                ['itemtype' => $item->getType(),
-                    'items_id' => $item->getID()]
-            );
-            echo "</td>";
-            echo "</tr>";
-            echo "</table>";
+            // Rendered via Twig so the manufacturer URL (which embeds the raw,
+            // user-controlled serial number) is auto-escaped in the href,
+            // preventing a stored XSS breakout of the attribute.
+            TemplateRenderer::getInstance()->display('@manufacturersimports/warranty_infocom.html.twig', [
+                'title'        => PreImport::getTypeName(2),
+                'url'          => $url,
+                'target'       => Config::getFormUrl(true),
+                'itemtype'     => $item->getType(),
+                'items_id'     => $item->getID(),
+                'button_label' => _sx('button', 'Retrieve warranty from manufacturer', 'manufacturersimports'),
+            ]);
         }
         return $item;
     }
 
     public static function retrieveOneWarranty($itemtype, $items_id)
     {
+        // Restrict to the itemtypes this plugin actually handles before touching
+        // anything derived from the user-supplied itemtype.
+        if (!in_array($itemtype, self::$types, true)) {
+            throw new AccessDeniedHttpException();
+        }
         $item = getItemForItemtype($itemtype);
         if (!$item) {
             return;
+        }
+        // The plugin UPDATE right alone does not prove the caller may act on THIS
+        // item: can() combines the global right with the entity perimeter, so a
+        // user restricted to entity A cannot target an item of entity B by id.
+        if (!$item->can($items_id, UPDATE)) {
+            throw new AccessDeniedHttpException();
         }
         if ($item->getFromDB($items_id)) {
             $log = new Log();
@@ -703,7 +802,7 @@ class Config extends CommonDBTM
             if ($config->getFromDBByCrit(['name' => $suppliername])) {
                 $suppliername = $config->fields["name"];
                 $supplierUrl  = $config->fields["supplier_url"];
-                $supplierkey  = $config->fields["supplier_key"];
+                $supplierkey  = self::decryptSecret($config->fields["supplier_key"]);
 
                 $url = PreImport::selectSupplier(
                     $suppliername,
@@ -733,7 +832,7 @@ class Config extends CommonDBTM
                 if (!in_array($suppliername, $allowed_suppliers, true)) {
                     return;
                 }
-                $supplierclass                  = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
+                $supplierclass                  = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
                 $token                          = $supplierclass::getToken($config);
                 $warranty_url                   = $supplierclass::getWarrantyUrl($config, $item->fields['serial']);
                 $options['token']               = $token;

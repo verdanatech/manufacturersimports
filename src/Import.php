@@ -1,30 +1,29 @@
 <?php
 
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2009-2022 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
@@ -84,8 +83,6 @@ class Import extends CommonDBTM
      */
     public static function importCron($task, $supplier)
     {
-        global $DB;
-
         $config = new Config();
         $config->getFromDBByCrit(['name' => $supplier]);
 
@@ -93,7 +90,7 @@ class Import extends CommonDBTM
 
         $suppliername = $config->fields["name"];
         $supplierUrl  = $config->fields["supplier_url"];
-        $supplierkey  = $config->fields["supplier_key"];
+        $supplierkey  = Config::decryptSecret($config->fields["supplier_key"]);
         $supplierId   = $config->fields["suppliers_id"];
 
         $toview = ["name" => 1];
@@ -111,13 +108,10 @@ class Import extends CommonDBTM
         //      foreach ($types as $type) {
         $type               = "Computer";
         $params['itemtype'] = $type;
-        $query              = PreImport::queryImport($params, $config, $toview, true);
+        $iterator = PreImport::queryImport($params, $config, $toview, true);
 
-        $result = $DB->doQuery($query);
-
-        if ($DB->numrows($result) > 0) {
-            while ($data = $DB->fetchArray($result)) {
-                $log->reinitializeImport($type, $data['id']);
+        foreach ($iterator as $data) {
+            $log->reinitializeImport($type, $data['id']);
 
                 $compSerial = $data['serial'];
                 $ID         = $data['id'];
@@ -163,7 +157,7 @@ class Import extends CommonDBTM
 
                 if ($suppliername == Config::DELL
                     || $suppliername == Config::HP) {
-                    $supplierclass    = "GlpiPlugin\Manufacturersimports\\".$suppliername;
+                    $supplierclass    = "GlpiPlugin\Manufacturersimports\Manufacturers\\".$suppliername;
                     $token            = $supplierclass::getToken($config);
                     $warranty_url     = $supplierclass::getWarrantyUrl($config, $compSerial);
                     $options['token'] = $token;
@@ -176,7 +170,6 @@ class Import extends CommonDBTM
                         $nb_import_error += 1;
                     }
                 }
-            }
         }
 
         //      }

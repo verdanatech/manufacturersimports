@@ -1,30 +1,29 @@
 <?php
 
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
@@ -32,13 +31,17 @@ namespace GlpiPlugin\Manufacturersimports;
 
 use Ajax;
 use CommonDBTM;
+use DBmysqlIterator;
 use DbUtils;
 use Dropdown;
+use Glpi\Application\View\TemplateRenderer;
 use Html;
 use Infocom;
+use Glpi\DBAL\QueryExpression;
 use Search;
 use Session;
 use Supplier;
+use GlpiPlugin\Manufacturersimports\Manufacturers\Manufacturer;
 use Toolbox;
 
 if (!defined('GLPI_ROOT')) {
@@ -54,6 +57,7 @@ class PreImport extends CommonDBTM
 
     public const IMPORTED     = 2;
     public const NOT_IMPORTED = 1;
+    public const IMPORT_ERROR = 3;
 
     /**
      * Return the localized name of the current Type
@@ -74,27 +78,27 @@ class PreImport extends CommonDBTM
      * @param int    $entity_restrict
      * @param string $types
      */
-    public static function showAllItems($myname, $value_type = 0, $value = 0, $entity_restrict = -1, $types = '')
-    {
-        if (!is_array($types)) {
-            $types = Config::getTypes();
-        }
-
-        $rand    = mt_rand();
-        $options = [];
-
-        foreach ($types as $type) {
-            $item           = new $type();
-            $options[$type] = $item::getTypeName();
-        }
-        asort($options);
-        if (count($options)) {
-            $id = "item_type$rand";
-            Dropdown::showFromArray($myname, $options, ['value'               => $value,
-                'id'                  => $id,
-                'display_emptychoice' => true]);
-        }
-    }
+//    public static function showAllItems($myname, $value_type = 0, $value = 0, $entity_restrict = -1, $types = '')
+//    {
+//        if (!is_array($types)) {
+//            $types = Config::getTypes();
+//        }
+//
+//        $rand    = mt_rand();
+//        $options = [];
+//
+//        foreach ($types as $type) {
+//            $item           = new $type();
+//            $options[$type] = $item::getTypeName();
+//        }
+//        asort($options);
+//        if (count($options)) {
+//            $id = "item_type$rand";
+//            Dropdown::showFromArray($myname, $options, ['value'               => $value,
+//                'id'                  => $id,
+//                'display_emptychoice' => true]);
+//        }
+//    }
 
     /**
      * Fonction to use the supplier url
@@ -112,7 +116,7 @@ class PreImport extends CommonDBTM
     ) {
         $url = "";
         if (!empty($suppliername)) {
-            $supplierclass = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
+            $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
             $supplier      = new $supplierclass();
             $infos         = $supplier->getSupplierInfo(
                 $compSerial,
@@ -146,7 +150,7 @@ class PreImport extends CommonDBTM
     ) {
         $url_warranty = "";
         if (!empty($suppliername)) {
-            $supplierclass = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
+            $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
             $supplier      = new $supplierclass();
             $infos         = $supplier->getSupplierInfo(
                 $compSerial,
@@ -173,7 +177,7 @@ class PreImport extends CommonDBTM
     {
         $url = "";
         if (!empty($suppliername)) {
-            $supplierclass = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
+            $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
             $supplier      = new $supplierclass();
             if (method_exists($supplier, "getSupplierMoreInfo")) {
                 $url = $supplier->getSupplierMoreInfo($compSerial, $otherserial, $supplierkey, $supplierUrl);
@@ -195,7 +199,7 @@ class PreImport extends CommonDBTM
     {
         $js = "";
         if (!empty($suppliername)) {
-            $supplierclass = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
+            $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
             $supplier      = new $supplierclass();
             if (method_exists($supplier, "getJSSupplier")) {
                 $js = $supplier->getJSSupplier($compSerial, $otherserial, $supplierkey, $supplierUrl);
@@ -220,7 +224,7 @@ class PreImport extends CommonDBTM
     ) {
         $post = "";
         if (!empty($suppliername)) {
-            $supplierclass = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
+            $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
             $supplier      = new $supplierclass();
             $infos         = $supplier->getSupplierInfo($compSerial, $otherserial, $supplierkey, $supplierSecret);
             if (isset($infos['post'])) {
@@ -239,200 +243,200 @@ class PreImport extends CommonDBTM
      * @param $status
      * @param $imported
      */
-    public static function showImport(
-        $row_num,
-        $item_num,
-        $line,
-        $output_type,
-        $manufacturers_id,
-        $itemtype,
-        $status,
-        $imported
-    ) {
-
-        $infocom = new Infocom();
-        $canedit = Session::haveRight(static::$rightname, UPDATE) && $infocom->canUpdate();
-        $config  = new Config();
-        $config->getFromDB($manufacturers_id);
-
-        $suppliername      = $config->fields["name"];
-        $supplierUrl       = $config->fields["supplier_url"];
-        $supplierId        = $config->fields["suppliers_id"];
-        $supplierWarranty  = $config->fields["warranty_duration"];
-        $supplierkey       = $config->fields["supplier_key"];
-        $supplierkeysecret = $config->fields["supplier_secret"];
-        $supplierclass     = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
-        $supplier          = new $supplierclass();
-
-        $row_num++;
-
-        if ($suppliername) {
-
-            $otherSerial = "";
-            $modelitemtype = $itemtype . "Model";
-            if (class_exists($modelitemtype)) {
-                $dbu = new DbUtils();
-                $modelfield = $dbu->getForeignKeyFieldForTable($dbu->getTableForItemType($itemtype . "Model"));
-                $models_id = $line[$modelfield];
-                if ($models_id != 0) {
-                    $modelclass = new $modelitemtype();
-                    $modelclass->getfromDB($models_id);
-                    $otherSerial = $modelclass->fields["product_number"];
-                }
-            }
-
-            echo Search::showNewLine($output_type, $row_num % 2);
-            $ic           = new Infocom();
-            $output_check = "";
-            if ($canedit
-                && $output_type == Search::HTML_OUTPUT) {
-                $sel = "";
-                if (isset($_GET["select"])
-                    && $_GET["select"] == "all") {
-                    $sel = "checked";
-                }
-                $output_check = $supplier->showCheckbox($line["id"], $sel, $otherSerial);
-            }
-
-            echo Search::showItem($output_type, $output_check, $item_num, $row_num);
-            $link = Toolbox::getItemTypeFormURL($line["itemtype"]);
-            $ID   = "";
-            if ($_SESSION["glpiis_ids_visible"]
-                || empty($line["name"])) {
-                $ID .= " (" . $line["id"] . ")";
-            }
-            $output_link = "<a href='" . $link . "?id=" . $line["id"] . "'>"
-                           . $line["name"] . $ID . "</a><br>" . $line["model_name"];
-            echo Search::showItem($output_type, $output_link, $item_num, $row_num);
-            if (Session::isMultiEntitiesMode()) {
-                echo Search::showItem(
-                    $output_type,
-                    Dropdown::getDropdownName(
-                        "glpi_entities",
-                        $line['entities_id']
-                    ),
-                    $item_num,
-                    $row_num
-                );
-            }
-
-            $url = self::selectSupplier(
-                $suppliername,
-                $supplierUrl,
-                $line["serial"],
-                $otherSerial,
-                $supplierkey,
-                $supplierkeysecret
-            );
-            //serial
-            echo Search::showItem($output_type, $line["serial"], $item_num, $row_num);
-            //otherserial
-            echo Search::showItem($output_type, $otherSerial, $item_num, $row_num);
-
-            //display infocoms
-            $output_ic = "";
-            if ($ic->getfromDBforDevice($line["itemtype"], $line["id"])) {
-                $output_ic .= _n('Supplier', 'Suppliers', 1) . ":"
-                              . Dropdown::getDropdownName("glpi_suppliers", $ic->fields["suppliers_id"]) . "<br>";
-                $output_ic .= __('Date of purchase') . " : " . Html::convdate($ic->fields["buy_date"]) . "<br>";
-                $output_ic .= __('Start date of warranty') . " : " . Html::convdate($ic->fields["warranty_date"]) . "<br>";
-                if ($ic->fields["warranty_duration"] == -1) {
-                    $output_ic .= __('Warranty duration') . " : " . __('Lifelong') . "<br>";
-                } else {
-                    $output_ic .= __('Warranty duration') . " : " . $ic->fields["warranty_duration"] . " " . __('month') . "<br>";
-                }
-                $tmpdat    = Infocom::getWarrantyExpir($ic->fields["warranty_date"], $ic->fields["warranty_duration"]);
-                $output_ic .= sprintf(__('Valid to %s'), $tmpdat);
-            } else {
-                $output_ic .= "";
-            }
-            echo Search::showItem($output_type, $output_ic, $item_num, $row_num);
-
-            if ($imported != self::IMPORTED) {
-                //display enterprise and warranty selection
-                echo "<td>";
-                if (Session::isMultiEntitiesMode() && $supplierId) {
-                    $item = new Supplier();
-                    $item->getFromDB($supplierId);
-                    if ($item->fields["is_recursive"]
-                        || $item->fields["entities_id"] == $line['entities_id']) {
-                        Dropdown::show('Supplier', ['name'     => "to_suppliers_id" . $line["id"],
-                            'value'    => $supplierId,
-                            'comments' => 0,
-                            'entity'   => $line['entities_id']]);
-                    } else {
-                        echo "<span class='plugin_manufacturersimports_import_KO'>";
-                        echo __('The choosen supplier is not recursive', 'manufacturersimports') . "</span>";
-                        $name = "to_suppliers_id" . $line["id"];
-                        echo Html::hidden($name, ['value' => -1]);
-                    }
-                } else {
-                    Dropdown::show('Supplier', ['name'     => "to_suppliers_id" . $line["id"],
-                        'value'    => $supplierId,
-                        'comments' => 0,
-                        'entity'   => $line['entities_id']]);
-                }
-                echo "</td>";
-
-                $supplier->showWarrantyItem($line["id"], $supplierWarranty);
-            } else {
-                //display enterprise and warranty selection
-                echo "<td>" . Dropdown::getDropdownName(
-                    "glpi_suppliers",
-                    $ic->fields["suppliers_id"]
-                ) . "</td>";
-                if ($ic->fields["warranty_duration"] == -1) {
-                    echo "<td>" . __('Lifelong') . "</td>";
-                } else {
-                    echo "<td>" . $ic->fields["warranty_duration"] . "</td>";
-                }
-            }
-
-            //supplier url
-            //url to supplier
-            $output_url = "<a href='" . $url . "' target='_blank'>"
-                          . __('Manufacturer information', 'manufacturersimports') . "</a>";
-
-            if ($suppliername == Config::LENOVO) {
-                $url        = self::selectSupplier(
-                    $suppliername,
-                    $supplierUrl,
-                    $line["serial"],
-                    $otherSerial,
-                    $supplierkey,
-                    $supplierkeysecret,
-                    true
-                );
-                $output_url = "<a href='" . $url . "' target='_blank'>"
-                              . __('Manufacturer information', 'manufacturersimports') . "</a>";
-            }
-            echo Search::showItem($output_type, $output_url, $item_num, $row_num);
-
-            //status
-            if ($imported != self::IMPORTED) {
-                if ($status != 2) {
-                    $output_doc = __('Not yet imported', 'manufacturersimports');
-                } else {
-                    $output_doc = "<span class='plugin_manufacturersimports_import_KO'>"
-                                  . __('Problem during the importation', 'manufacturersimports');
-                    if (!empty($data["date_import"])) {
-                        $output_doc .= " (" . Html::convdate($data["date_import"]) . ")";
-                    }
-                    $output_doc .= "</span>";
-                }
-            } else {
-                $output_doc = "<span class='plugin_manufacturersimports_import_OK'>"
-                              . __('Already imported', 'manufacturersimports');
-                if (!empty($line["date_import"])) {
-                    $output_doc .= " (" . Html::convdate($line["date_import"]) . ")";
-                }
-                $output_doc .= "</span>";
-            }
-            echo Search::showItem($output_type, $output_doc, $item_num, $row_num);
-            //no associated doc
-            echo $supplier->showDocItem($output_type, $item_num, $row_num, $line["documents_id"]);
-        }
-    }
+//    public static function showImport(
+//        $row_num,
+//        $item_num,
+//        $line,
+//        $output_type,
+//        $manufacturers_id,
+//        $itemtype,
+//        $status,
+//        $imported
+//    ) {
+//
+//        $infocom = new Infocom();
+//        $canedit = Session::haveRight(static::$rightname, UPDATE) && $infocom->canUpdate();
+//        $config  = new Config();
+//        $config->getFromDB($manufacturers_id);
+//
+//        $suppliername      = $config->fields["name"];
+//        $supplierUrl       = $config->fields["supplier_url"];
+//        $supplierId        = $config->fields["suppliers_id"];
+//        $supplierWarranty  = $config->fields["warranty_duration"];
+//        $supplierkey       = $config->fields["supplier_key"];
+//        $supplierkeysecret = $config->fields["supplier_secret"];
+//        $supplierclass     = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
+//        $supplier          = new $supplierclass();
+//
+//        $row_num++;
+//
+//        if ($suppliername) {
+//
+//            $otherSerial = "";
+//            $modelitemtype = $itemtype . "Model";
+//            if (class_exists($modelitemtype)) {
+//                $dbu = new DbUtils();
+//                $modelfield = $dbu->getForeignKeyFieldForTable($dbu->getTableForItemType($itemtype . "Model"));
+//                $models_id = $line[$modelfield];
+//                if ($models_id != 0) {
+//                    $modelclass = new $modelitemtype();
+//                    $modelclass->getfromDB($models_id);
+//                    $otherSerial = $modelclass->fields["product_number"];
+//                }
+//            }
+//
+//            echo Search::showNewLine($output_type, $row_num % 2);
+//            $ic           = new Infocom();
+//            $output_check = "";
+//            if ($canedit
+//                && $output_type == Search::HTML_OUTPUT) {
+//                $sel = "";
+//                if (isset($_GET["select"])
+//                    && $_GET["select"] == "all") {
+//                    $sel = "checked";
+//                }
+//                $output_check = $supplier->showCheckbox($line["id"], $sel, $otherSerial);
+//            }
+//
+//            echo Search::showItem($output_type, $output_check, $item_num, $row_num);
+//            $link = Toolbox::getItemTypeFormURL($line["itemtype"]);
+//            $ID   = "";
+//            if ($_SESSION["glpiis_ids_visible"]
+//                || empty($line["name"])) {
+//                $ID .= " (" . $line["id"] . ")";
+//            }
+//            $output_link = "<a href='" . $link . "?id=" . $line["id"] . "'>"
+//                           . $line["name"] . $ID . "</a><br>" . $line["model_name"];
+//            echo Search::showItem($output_type, $output_link, $item_num, $row_num);
+//            if (Session::isMultiEntitiesMode()) {
+//                echo Search::showItem(
+//                    $output_type,
+//                    Dropdown::getDropdownName(
+//                        "glpi_entities",
+//                        $line['entities_id']
+//                    ),
+//                    $item_num,
+//                    $row_num
+//                );
+//            }
+//
+//            $url = self::selectSupplier(
+//                $suppliername,
+//                $supplierUrl,
+//                $line["serial"],
+//                $otherSerial,
+//                $supplierkey,
+//                $supplierkeysecret
+//            );
+//            //serial
+//            echo Search::showItem($output_type, $line["serial"], $item_num, $row_num);
+//            //otherserial
+//            echo Search::showItem($output_type, $otherSerial, $item_num, $row_num);
+//
+//            //display infocoms
+//            $output_ic = "";
+//            if ($ic->getfromDBforDevice($line["itemtype"], $line["id"])) {
+//                $output_ic .= _n('Supplier', 'Suppliers', 1) . ":"
+//                              . Dropdown::getDropdownName("glpi_suppliers", $ic->fields["suppliers_id"]) . "<br>";
+//                $output_ic .= __('Date of purchase') . " : " . Html::convdate($ic->fields["buy_date"]) . "<br>";
+//                $output_ic .= __('Start date of warranty') . " : " . Html::convdate($ic->fields["warranty_date"]) . "<br>";
+//                if ($ic->fields["warranty_duration"] == -1) {
+//                    $output_ic .= __('Warranty duration') . " : " . __('Lifelong') . "<br>";
+//                } else {
+//                    $output_ic .= __('Warranty duration') . " : " . $ic->fields["warranty_duration"] . " " . __('month') . "<br>";
+//                }
+//                $tmpdat    = Infocom::getWarrantyExpir($ic->fields["warranty_date"], $ic->fields["warranty_duration"]);
+//                $output_ic .= sprintf(__('Valid to %s'), $tmpdat);
+//            } else {
+//                $output_ic .= "";
+//            }
+//            echo Search::showItem($output_type, $output_ic, $item_num, $row_num);
+//
+//            if ($imported != self::IMPORTED) {
+//                //display enterprise and warranty selection
+//                echo "<td>";
+//                if (Session::isMultiEntitiesMode() && $supplierId) {
+//                    $item = new Supplier();
+//                    $item->getFromDB($supplierId);
+//                    if ($item->fields["is_recursive"]
+//                        || $item->fields["entities_id"] == $line['entities_id']) {
+//                        Dropdown::show('Supplier', ['name'     => "to_suppliers_id" . $line["id"],
+//                            'value'    => $supplierId,
+//                            'comments' => 0,
+//                            'entity'   => $line['entities_id']]);
+//                    } else {
+//                        echo "<span class='plugin_manufacturersimports_import_KO'>";
+//                        echo __('The choosen supplier is not recursive', 'manufacturersimports') . "</span>";
+//                        $name = "to_suppliers_id" . $line["id"];
+//                        echo Html::hidden($name, ['value' => -1]);
+//                    }
+//                } else {
+//                    Dropdown::show('Supplier', ['name'     => "to_suppliers_id" . $line["id"],
+//                        'value'    => $supplierId,
+//                        'comments' => 0,
+//                        'entity'   => $line['entities_id']]);
+//                }
+//                echo "</td>";
+//
+//                $supplier->showWarrantyItem($line["id"], $supplierWarranty);
+//            } else {
+//                //display enterprise and warranty selection
+//                echo "<td>" . Dropdown::getDropdownName(
+//                    "glpi_suppliers",
+//                    $ic->fields["suppliers_id"]
+//                ) . "</td>";
+//                if ($ic->fields["warranty_duration"] == -1) {
+//                    echo "<td>" . __('Lifelong') . "</td>";
+//                } else {
+//                    echo "<td>" . $ic->fields["warranty_duration"] . "</td>";
+//                }
+//            }
+//
+//            //supplier url
+//            //url to supplier
+//            $output_url = "<a href='" . $url . "' target='_blank'>"
+//                          . __('Manufacturer information', 'manufacturersimports') . "</a>";
+//
+//            if ($suppliername == Config::LENOVO) {
+//                $url        = self::selectSupplier(
+//                    $suppliername,
+//                    $supplierUrl,
+//                    $line["serial"],
+//                    $otherSerial,
+//                    $supplierkey,
+//                    $supplierkeysecret,
+//                    true
+//                );
+//                $output_url = "<a href='" . $url . "' target='_blank'>"
+//                              . __('Manufacturer information', 'manufacturersimports') . "</a>";
+//            }
+//            echo Search::showItem($output_type, $output_url, $item_num, $row_num);
+//
+//            //status
+//            if ($imported != self::IMPORTED) {
+//                if ($status != 2) {
+//                    $output_doc = __('Not yet imported', 'manufacturersimports');
+//                } else {
+//                    $output_doc = "<span class='plugin_manufacturersimports_import_KO'>"
+//                                  . __('Problem during the importation', 'manufacturersimports');
+//                    if (!empty($data["date_import"])) {
+//                        $output_doc .= " (" . Html::convdate($data["date_import"]) . ")";
+//                    }
+//                    $output_doc .= "</span>";
+//                }
+//            } else {
+//                $output_doc = "<span class='plugin_manufacturersimports_import_OK'>"
+//                              . __('Already imported', 'manufacturersimports');
+//                if (!empty($line["date_import"])) {
+//                    $output_doc .= " (" . Html::convdate($line["date_import"]) . ")";
+//                }
+//                $output_doc .= "</span>";
+//            }
+//            echo Search::showItem($output_type, $output_doc, $item_num, $row_num);
+//            //no associated doc
+//            echo $supplier->showDocItem($output_type, $item_num, $row_num, $line["documents_id"]);
+//        }
+//    }
 
     /**
      * Prints search form
@@ -447,85 +451,63 @@ class PreImport extends CommonDBTM
     {
         global $DB;
 
-        // Default values of parameters
-        $p['itemtype']         = '';
-        $p['manufacturers_id'] = '';
-        $p['imported']         = '';
+        $p = [
+            'itemtype'         => '',
+            'manufacturers_id' => '',
+            'imported'         => '',
+        ];
 
         foreach ($params as $key => $val) {
             $p[$key] = $val;
         }
 
-        echo "<form name='form' method='post' action='" . PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . "/front/import.php'>";
-        echo "<div class='center'><table class='tab_cadre' cellpadding='5'>";
-        echo "<tr><th colspan='4'>" . __('Choose inventory type and manufacturer', 'manufacturersimports') . "</th></tr>";
-        echo "<tr class='tab_bg_2'>";
-        echo "<td class='center'>";
-
         $criteria = [
-            'SELECT' => '*',
-            'FROM' => 'glpi_plugin_manufacturersimports_configs',
-            'WHERE' => [
+            'SELECT'  => '*',
+            'FROM'    => 'glpi_plugin_manufacturersimports_configs',
+            'WHERE'   => [
                 'glpi_plugin_manufacturersimports_configs.manufacturers_id' => ['>', 0],
             ],
-            'ORDERBY'   => ['glpi_plugin_manufacturersimports_configs.entities_id',
-                'glpi_plugin_manufacturersimports_configs.name'],
+            'ORDERBY' => [
+                'glpi_plugin_manufacturersimports_configs.entities_id',
+                'glpi_plugin_manufacturersimports_configs.name',
+            ],
         ];
-        $criteria['WHERE'] = $criteria['WHERE'] + getEntitiesRestrictCriteria(
-            'glpi_plugin_manufacturersimports_configs'
-        );
+        $criteria['WHERE'] += getEntitiesRestrictCriteria('glpi_plugin_manufacturersimports_configs');
 
-        $iterator = $DB->request($criteria);
-
-        if (count($iterator) > 0) {
-            self::showAllItems(
-                "itemtype",
-                0,
-                $p['itemtype'],
-                -1,
-                Config::getTypes()
-            );
-            echo "</td><td>";
-            foreach ($iterator as $data) {
-                //            if (Session::isMultiEntitiesMode()) {
-                //               $name = Dropdown::getDropdownName("glpi_entities", $data["entities_id"]) . " > ";
-                //            }
-                $name = $data["name"];
-                if (empty($data["name"]) || $_SESSION["glpiis_ids_visible"]) {
-                    $name .= " (";
-                    $name .= $data["id"] . ")";
-                }
-                $opt[$data["id"]] = $name;
+        $manufacturer_opts = [];
+        foreach ($DB->request($criteria) as $data) {
+            $name = $data['name'];
+            if (empty($data['name']) || $_SESSION['glpiis_ids_visible']) {
+                $name .= ' (' . $data['id'] . ')';
             }
-
-            Dropdown::showFromArray('manufacturers_id', $opt, ['value' => $p['manufacturers_id']]);
-
-            echo "</td><td>";
-
-            $options[self::NOT_IMPORTED] = __('Devices not imported', 'manufacturersimports');
-            $options[self::IMPORTED]     = __('Devices already imported', 'manufacturersimports');
-            Dropdown::showFromArray('imported', $options, ['value' => $p['imported']]);
-        } else {
-            if (Session::haveRight('config', UPDATE)) {
-                //Please configure a supplier
-                echo "<a class='submit btn btn-primary' href='" . PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . "/front/config.form.php'>";
-                echo __('No manufacturer available. Please configure at least one manufacturer', 'manufacturersimports');
-                echo "</a>";
-            } else {
-                echo "<div class='alert  alert-warning d-flex'>";
-                echo __('No manufacturer available. Please configure at least one manufacturer', 'manufacturersimports');
-                echo "</div>";
-            }
+            $manufacturer_opts[$data['id']] = $name;
         }
-        echo "</td><td>";
-        if (count($iterator) > 0) {
-            echo Html::submit(_sx('button', 'Post'), ['name' => 'typechoice', 'class' => 'btn btn-primary']);
-        }
-        echo "</td>";
-        echo "</tr>";
 
-        echo "</table></div>";
-        Html::closeForm();
+        $type_opts = [];
+        foreach (Config::getTypes() as $type) {
+            $item              = new $type();
+            $type_opts[$type]  = $item::getTypeName();
+        }
+        asort($type_opts);
+
+        $imported_opts = [
+            self::NOT_IMPORTED => __('Devices not imported', 'manufacturersimports'),
+            self::IMPORTED     => __('Devices already imported', 'manufacturersimports'),
+            self::IMPORT_ERROR => __('Devices with import error', 'manufacturersimports'),
+        ];
+
+        TemplateRenderer::getInstance()->display('@manufacturersimports/search_form.html.twig', [
+            'target'           => PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/front/import.php',
+            'config_url'       => PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/front/config.form.php',
+            'has_configs'      => count($manufacturer_opts) > 0,
+            'can_config'       => Session::haveRight('config', UPDATE),
+            'itemtype'         => $p['itemtype'],
+            'manufacturers_id' => $p['manufacturers_id'],
+            'imported'         => $p['imported'],
+            'type_opts'        => $type_opts,
+            'manufacturer_opts' => $manufacturer_opts,
+            'imported_opts'    => $imported_opts,
+        ]);
 
         return true;
     }
@@ -536,242 +518,305 @@ class PreImport extends CommonDBTM
      */
     public static function seePreImport($params)
     {
-        global $DB, $CFG_GLPI;
-
-
-        // Default values of parameters
-        $p['link']             = [];
-        $p['field']            = [];
-        $p['contains']         = [];
-        $p['searchtype']       = [];
-        $p['sort']             = '1';
-        $p['order']            = 'ASC';
-        $p['start']            = 0;
-        $p['export_all']       = 0;
-        $p['link2']            = '';
-        $p['contains2']        = '';
-        $p['field2']           = '';
-        $p['itemtype2']        = '';
-        $p['searchtype2']      = '';
-        $p['itemtype']         = '';
-        $p['manufacturers_id'] = '';
-        $p['imported']         = '';
+        $p = [
+            'link'             => [],
+            'field'            => [],
+            'contains'         => [],
+            'searchtype'       => [],
+            'sort'             => '1',
+            'order'            => 'ASC',
+            'start'            => 0,
+            'export_all'       => 0,
+            'link2'            => '',
+            'contains2'        => '',
+            'field2'           => '',
+            'itemtype2'        => '',
+            'searchtype2'      => '',
+            'itemtype'         => '',
+            'manufacturers_id' => '',
+            'imported'         => '',
+        ];
 
         foreach ($params as $key => $val) {
             $p[$key] = $val;
         }
 
-        $target     = PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . "/front/import.php";
+        if (!$p['itemtype'] || !$p['manufacturers_id']) {
+            return;
+        }
 
-        if ($p['itemtype'] && $p['manufacturers_id']) {
-            $config = new Config();
-            $config->getFromDB($p['manufacturers_id']);
-            $suppliername  = $config->fields["name"] ?? "";
-            $supplierclass = "GlpiPlugin\Manufacturersimports\\" . $suppliername;
-            $supplier      = new $supplierclass();
+        $config = new Config();
+        $config->getFromDB($p['manufacturers_id']);
+        $suppliername  = $config->fields['name'] ?? '';
+        $supplierclass = 'GlpiPlugin\\Manufacturersimports\\Manufacturers\\' . $suppliername;
+        // Guard against an unexpected config name that maps to no manufacturer
+        // class, which would otherwise fatal on instantiation (as Config::display does).
+        if ($suppliername === '' || !class_exists($supplierclass)) {
+            return;
+        }
+        $supplier      = new $supplierclass();
 
-            $infocom = new Infocom();
-            $canedit = Session::haveRight(static::$rightname, UPDATE) && $infocom->canUpdate();
+        $infocom = new Infocom();
+        $canedit = Session::haveRight(static::$rightname, UPDATE) && $infocom->canUpdate();
 
-            if (!$p['start']) {
-                $p['start'] = 0;
-            }
+        $p['start'] = (int) ($p['start'] ?? 0);
+        $toview     = ['name' => 1];
+        $iterator   = self::queryImport($p, $config, $toview);
+        $numrows    = count($iterator);
 
-            $toview = ["name" => 1];
+        $LIST_LIMIT  = $_SESSION['glpilist_limit'];
+        $end_display = $p['start'] + $LIST_LIMIT;
+        $target      = PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/front/import.php';
+        // Sanitise every segment at the source: these values flow unescaped into
+        // href attributes in printPager(). itemtype is url-encoded, the numeric
+        // filters are cast to int, so no quote can break out of the attribute.
+        $parameters  = 'itemtype=' . rawurlencode($p['itemtype'])
+                       . '&manufacturers_id=' . (int) $p['manufacturers_id']
+                       . '&imported=' . (int) $p['imported'];
 
-            $query = self::queryImport($p, $config, $toview);
+        if ($p['start'] >= $numrows) {
+            TemplateRenderer::getInstance()->display('@manufacturersimports/pre_import_list.html.twig', [
+                'no_results' => true,
+            ]);
+            return;
+        }
 
-            $result  = $DB->doQuery($query);
-            $numrows = $DB->numrows($result);
+        $has_doc_col = ($supplier->showDocTitle(Search::HTML_OUTPUT, 1) !== false);
 
-            if ($p['start'] < $numrows) {
-                // Set display type for export if define
-                $output_type = Search::HTML_OUTPUT;
-                if (isset($_GET["display_type"])) {
-                    $output_type = $_GET["display_type"];
-                }
-                $parameters = "itemtype=" . $p['itemtype']
-                              . "&manufacturers_id=" . $p['manufacturers_id']
-                              . "&imported=" . $p['imported'];
-                $total      = 0;
+        $columns = [];
+        if ($canedit) {
+            $columns['_check'] = '';
+        }
+        $columns['name'] = __('Name');
+        if (Session::isMultiEntitiesMode()) {
+            $columns['entity'] = __('Entity');
+        }
+        $columns['serial']   = __('Serial number');
+        $columns['model']    = __('Model Number', 'manufacturersimports');
+        $columns['infocom']  = __('Financial and administrative information');
+        $columns['supplier'] = __('Supplier attached', 'manufacturersimports');
+        $columns['warranty'] = __('New warranty attached', 'manufacturersimports');
+        $columns['link']     = _n('Link', 'Links', 1);
+        $columns['status']   = _n('Status', 'Statuses', 1);
+        if ($has_doc_col) {
+            $columns['document'] = __('File');
+        }
 
-                if ($output_type == Search::HTML_OUTPUT) {
-                    self::printPager(
-                        $p['start'],
-                        $numrows,
-                        $target,
-                        $parameters,
-                        $p['itemtype']
-                    );
-                }
+        $formatters = array_fill_keys(array_keys($columns), 'raw_html');
 
+        if ($p['start'] > 0 && $numrows > 0) {
+            $iterator->seek($p['start']);
+        } else {
+            $iterator->rewind();
+        }
 
-                if (Session::isMultiEntitiesMode()) {
-                    $colsup = 1;
-                } else {
-                    $colsup = 0;
-                }
-                //////////////////////HEADER///////////////
-                if ($output_type == Search::HTML_OUTPUT) {
-                    echo "<form method='post' name='massiveaction_form' id='massiveaction_form' action=\"../front/massiveaction.php\">";
-                }
+        $entries = [];
+        $total   = 0;
+        $comp_id = 0;
+        $i       = $p['start'];
 
-                //echo Search::displaySearchHeader($output_type,0); //table + div
-                if ($canedit) {
-                    $nbcols = 11 + $colsup;
-                } else {
-                    $nbcols = 10 + $colsup;
-                }
-                $LIST_LIMIT    = $_SESSION['glpilist_limit'];
-                $begin_display = $p['start'];
-                $end_display   = $p['start'] + $LIST_LIMIT;
+        while ($iterator->valid() && $i < $end_display) {
+            $line             = $iterator->current();
+            $iterator->next();
+            $i++;
+            $line['itemtype'] = $p['itemtype'];
+            $comp_id          = $line['id'];
 
-                echo Search::showHeader($output_type, $end_display - $begin_display + 1, $nbcols);
-                echo Search::showNewLine($output_type);
-                $header_num = 1;
+            $entries[] = self::buildRowEntry(
+                $line,
+                $config->fields,
+                $supplier,
+                $canedit,
+                $has_doc_col,
+                (int) $p['imported']
+            );
 
-                echo Search::showHeaderItem($output_type, "", $header_num);
-                echo Search::showHeaderItem(
-                    $output_type,
-                    __('Name'),
-                    $header_num,
-                    '',
-                    $p['sort'] == $val,
-                    $p['order']
-                );
-                if (Session::isMultiEntitiesMode()) {
-                    echo Search::showHeaderItem($output_type, __('Entity'), $header_num);
-                }
-                echo Search::showHeaderItem($output_type, __('Serial number'), $header_num);
-                echo Search::showHeaderItem($output_type, __('Model Number', 'manufacturersimports'), $header_num);
-                echo Search::showHeaderItem(
-                    $output_type,
-                    __('Financial and administrative information'),
-                    $header_num
-                );
-                echo Search::showHeaderItem(
-                    $output_type,
-                    __('Supplier attached', 'manufacturersimports'),
-                    $header_num
-                );
-                echo Search::showHeaderItem(
-                    $output_type,
-                    __('New warranty attached', 'manufacturersimports'),
-                    $header_num
-                );
-                echo Search::showHeaderItem(
-                    $output_type,
-                    _n('Link', 'Links', 1),
-                    $header_num
-                );
-                echo Search::showHeaderItem(
-                    $output_type,
-                    _n('Status', 'Statuses', 1),
-                    $header_num
-                );
-                echo $supplier->showDocTitle($output_type, $header_num);
-
-                // End Line for column headers
-                echo Search::showEndLine($output_type);
-
-                $i = $p['start'];
-                if (isset($_GET['export_all'])) {
-                    $i = 0;
-                }
-                if ($i > 0) {
-                    $DB->dataSeek($result, $i);
-                }
-
-                $row_num = 1;
-
-                while ($i < $numrows && $i < $end_display) {
-                    $i++;
-
-                    $item_num   = 1;
-                    $line       = $DB->fetchArray($result);
-                    $compId     = $line['id'];
-
-                    //                    if (!$line["itemtype"]) {
-                    $line["itemtype"] = $p['itemtype'];
-                    //                    }
-
-                    self::showImport(
-                        $row_num,
-                        $item_num,
-                        $line,
-                        $output_type,
-                        $p['manufacturers_id'],
-                        $p['itemtype'],
-                        $line["import_status"],
-                        $p['imported']
-                    );
-                    //1.show already imported items && import_status not failed
-                    if ($p['imported'] == 1) {
-                        $total += 1;
-                    }
-                }
-                echo "<tr class='tab_bg_1'><td colspan='"
-                     . ($canedit ? (11 + $colsup) : (10 + $colsup)) . "'>";
-                echo sprintf(__(
-                    'Total number of devices to import %s',
-                    'manufacturersimports'
-                ), $total);
-                echo "</td></tr>";
-
-                // Close Table
-                $title = "";
-                // Create title
-                if ($output_type == Search::PDF_OUTPUT_PORTRAIT
-                    || $output_type == Search::PDF_OUTPUT_LANDSCAPE) {
-                    $title
-                       .= PreImport::getTypeName(2)
-                       . " " . $suppliername;
-                }
-
-                echo Search::showFooter($output_type, $title);
-
-                //massive action
-                if ($canedit && $output_type == Search::HTML_OUTPUT) {
-                    if ($_SESSION['glpilist_limit'] < Toolbox::get_max_input_vars()) {
-                        self::openArrowMassives("massiveaction_form", false);
-                        self::dropdownMassiveAction(
-                            $compId,
-                            $p['itemtype'],
-                            $p['manufacturers_id'],
-                            $p['start'],
-                            $p['imported']
-                        );
-                        self::closeArrowMassives([]);
-                    } else {
-                        echo "<table class='tab_cadre' width='80%'><tr class='tab_bg_1'>"
-                             . "<td><span class='b'>";
-                        echo __('Selection too large, massive action disabled.') . "</span>";
-                        if ($_SESSION['glpi_use_mode'] == Session::DEBUG_MODE) {
-                            echo "<br>" . __('To increase the limit: change max_input_vars or suhosin.post.max_vars in php configuration.');
-                        }
-                        echo "</td></tr></table>";
-                    }
-                    Html::closeForm();
-                } else {
-                    echo "</table>";
-                    echo "</div>";
-                }
-
-                echo "<br>";
-                if ($output_type == Search::HTML_OUTPUT) {
-                    self::printPager(
-                        $p['start'],
-                        $numrows,
-                        $target,
-                        $parameters,
-                        $p['itemtype']
-                    );
-                }
-            } else {
-                echo "<div class='center'><b>"
-                     . __('No device finded', 'manufacturersimports') . "</b></div>";
+            if ((int) $p['imported'] !== self::IMPORTED) {
+                $total++;
             }
         }
+
+        TemplateRenderer::getInstance()->display('@manufacturersimports/pre_import_list.html.twig', [
+            'no_results'       => false,
+            'columns'          => $columns,
+            'formatters'       => $formatters,
+            'entries'          => $entries,
+            'total_number'     => count($entries),
+            'filtered_number'  => count($entries),
+            'total_devices'    => $total,
+            'canedit'          => $canedit,
+            'start'            => $p['start'],
+            'numrows'          => $numrows,
+            'target'           => $target,
+            'parameters'       => $parameters,
+            'suppliername'     => $suppliername,
+            'comp_id'          => $comp_id,
+            'itemtype'         => $p['itemtype'],
+            'manufacturers_id' => (int) $p['manufacturers_id'],
+            'imported'         => (int) $p['imported'],
+            'list_limit'       => $LIST_LIMIT,
+            'max_input_vars'   => Toolbox::get_max_input_vars(),
+            'plugin_webdir'    => PLUGIN_MANUFACTURERSIMPORTS_WEBDIR,
+        ]);
+    }
+
+    /**
+     * Build a datatable row entry for one device.
+     */
+    private static function buildRowEntry(
+        array $line,
+        array $config_fields,
+        Manufacturer $supplier,
+        bool $canedit,
+        bool $has_doc_col,
+        int $imported
+    ): array {
+        $suppliername      = $config_fields['name'];
+        $supplierUrl       = $config_fields['supplier_url'];
+        $supplierId        = $config_fields['suppliers_id'];
+        $supplierWarranty  = $config_fields['warranty_duration'];
+        $supplierkey       = Config::decryptSecret($config_fields['supplier_key']);
+        $supplierkeysecret = Config::decryptSecret($config_fields['supplier_secret']);
+
+        $otherSerial   = '';
+        $modelitemtype = $line['itemtype'] . 'Model';
+        if (class_exists($modelitemtype)) {
+            $dbu        = new DbUtils();
+            $modelfield = $dbu->getForeignKeyFieldForTable($dbu->getTableForItemType($modelitemtype));
+            $models_id  = $line[$modelfield] ?? 0;
+            if ($models_id != 0) {
+                $modelclass  = new $modelitemtype();
+                $modelclass->getFromDB($models_id);
+                $otherSerial = $modelclass->fields['product_number'] ?? '';
+            }
+        }
+
+        $entry = [];
+
+        if ($canedit) {
+            $sel             = (isset($_GET['select']) && $_GET['select'] === 'all') ? 'checked' : '';
+            $entry['_check'] = $supplier->showCheckbox($line['id'], $sel, $otherSerial);
+        }
+
+        $link      = Toolbox::getItemTypeFormURL($line['itemtype']);
+        $id_suffix = ($_SESSION['glpiis_ids_visible'] || empty($line['name']))
+            ? ' (' . $line['id'] . ')'
+            : '';
+        $entry['name'] = "<a href='" . $link . "?id=" . $line['id'] . "'>"
+                         . htmlescape($line['name'] ?? '') . $id_suffix . '</a><br>'
+                         . htmlescape($line['model_name'] ?? '');
+
+        if (Session::isMultiEntitiesMode()) {
+            $entry['entity'] = Dropdown::getDropdownName('glpi_entities', $line['entities_id']);
+        }
+
+        $entry['serial'] = htmlescape($line['serial'] ?? '');
+        $entry['model']  = htmlescape($otherSerial);
+
+        $ic        = new Infocom();
+        $ic_loaded = $ic->getFromDBforDevice($line['itemtype'], $line['id']);
+        $output_ic = '';
+        if ($ic_loaded) {
+            $output_ic .= _n('Supplier', 'Suppliers', 1) . ': '
+                          . Dropdown::getDropdownName('glpi_suppliers', $ic->fields['suppliers_id']) . '<br>';
+            $output_ic .= __('Date of purchase') . ': ' . Html::convdate($ic->fields['buy_date']) . '<br>';
+            $output_ic .= __('Start date of warranty') . ': ' . Html::convdate($ic->fields['warranty_date']) . '<br>';
+            if ($ic->fields['warranty_duration'] == -1) {
+                $output_ic .= __('Warranty duration') . ': ' . __('Lifelong') . '<br>';
+            } else {
+                $output_ic .= __('Warranty duration') . ': ' . $ic->fields['warranty_duration'] . ' ' . __('month') . '<br>';
+            }
+            $tmpdat     = Infocom::getWarrantyExpir($ic->fields['warranty_date'], $ic->fields['warranty_duration']);
+            $output_ic .= sprintf(__('Valid to %s'), $tmpdat);
+        }
+        $entry['infocom'] = $output_ic;
+
+        if ($imported !== self::IMPORTED) {
+            ob_start();
+            if (Session::isMultiEntitiesMode() && $supplierId) {
+                $item = new Supplier();
+                $item->getFromDB($supplierId);
+                if ($item->fields['is_recursive'] || $item->fields['entities_id'] == $line['entities_id']) {
+                    Dropdown::show('Supplier', [
+                        'name'     => 'to_suppliers_id' . $line['id'],
+                        'value'    => $supplierId,
+                        'comments' => 0,
+                        'entity'   => $line['entities_id'],
+                    ]);
+                } else {
+                    echo "<span class='plugin_manufacturersimports_import_KO'>";
+                    echo __('The choosen supplier is not recursive', 'manufacturersimports');
+                    echo '</span>';
+                    echo Html::hidden('to_suppliers_id' . $line['id'], ['value' => -1]);
+                }
+            } else {
+                Dropdown::show('Supplier', [
+                    'name'     => 'to_suppliers_id' . $line['id'],
+                    'value'    => $supplierId,
+                    'comments' => 0,
+                    'entity'   => $line['entities_id'],
+                ]);
+            }
+            $entry['supplier'] = ob_get_clean();
+
+            ob_start();
+            $supplier->showWarrantyItem($line['id'], $supplierWarranty);
+            $warranty_html = ob_get_clean();
+            if (preg_match('/<td[^>]*>(.*)<\/td>/s', $warranty_html, $m)) {
+                $warranty_html = $m[1];
+            }
+            $entry['warranty'] = $warranty_html;
+        } else {
+            $entry['supplier'] = $ic_loaded
+                ? Dropdown::getDropdownName('glpi_suppliers', $ic->fields['suppliers_id'])
+                : '';
+            $entry['warranty'] = $ic_loaded
+                ? (($ic->fields['warranty_duration'] == -1)
+                    ? __('Lifelong')
+                    : (string) $ic->fields['warranty_duration'])
+                : '';
+        }
+
+        $url = self::selectSupplier(
+            $suppliername, $supplierUrl, $line['serial'], $otherSerial, $supplierkey, $supplierkeysecret
+        );
+        if ($suppliername === Config::LENOVO) {
+            $url = self::selectSupplier(
+                $suppliername, $supplierUrl, $line['serial'], $otherSerial, $supplierkey, $supplierkeysecret, true
+            );
+        }
+        $entry['link'] = "<a href='" . htmlescape($url) . "' target='_blank'>"
+                         . __('Manufacturer information', 'manufacturersimports') . '</a>';
+
+        if ($imported !== self::IMPORTED) {
+            if (($line['import_status'] ?? 0) != 2) {
+                $entry['status'] = __('Not yet imported', 'manufacturersimports');
+            } else {
+                $entry['status'] = "<span class='plugin_manufacturersimports_import_KO'>"
+                                   . __('Problem during the importation', 'manufacturersimports');
+                if (!empty($line['date_import'])) {
+                    $entry['status'] .= ' (' . Html::convdate($line['date_import']) . ')';
+                }
+                $entry['status'] .= '</span>';
+            }
+        } else {
+            $entry['status'] = "<span class='plugin_manufacturersimports_import_OK'>"
+                               . __('Already imported', 'manufacturersimports');
+            if (!empty($line['date_import'])) {
+                $entry['status'] .= ' (' . Html::convdate($line['date_import']) . ')';
+            }
+            $entry['status'] .= '</span>';
+        }
+
+        if ($has_doc_col) {
+            $doc_html = $supplier->showDocItem(Search::HTML_OUTPUT, 1, 1, $line['documents_id'] ?? null);
+            if (preg_match('/<td[^>]*>(.*)<\/td>/s', $doc_html, $m)) {
+                $doc_html = $m[1];
+            }
+            $entry['document'] = $doc_html;
+        }
+
+        return $entry;
     }
 
     /**
@@ -838,78 +883,102 @@ class PreImport extends CommonDBTM
      * @param $config
      * @param $toview
      *
-     * @return string
+     * @return DBmysqlIterator
      */
-    public static function queryImport($p, $config, $toview, $isCron = false)
+    public static function queryImport($p, $config, $toview, $isCron = false): DBmysqlIterator
     {
-        if (!in_array($p['itemtype'], Config::$types, true)) {
-            return '';
-        }
-        $p['manufacturers_id'] = (int) $p['manufacturers_id'];
+        global $DB;
 
         $dbu = new DbUtils();
 
-        $modeltable = $dbu->getTableForItemType($p['itemtype'] . "Model");
-        $modelfield = $dbu->getForeignKeyFieldForTable($dbu->getTableForItemType($p['itemtype'] . "Model"));
+        $modeltable = $dbu->getTableForItemType($p['itemtype'] . 'Model');
+        $modelfield = $dbu->getForeignKeyFieldForTable($dbu->getTableForItemType($p['itemtype'] . 'Model'));
         $item       = getItemForItemtype($p['itemtype']);
         $itemtable  = $dbu->getTableForItemType($p['itemtype']);
 
-        $query = "SELECT `" . $itemtable . "`.`id`,
-                        `" . $itemtable . "`.`name`,
-                        `" . $itemtable . "`.`serial`,
-                        `" . $itemtable . "`.`$modelfield`,
-                        `" . $itemtable . "`.`entities_id`,
-                        `glpi_plugin_manufacturersimports_logs`.`import_status`,
-                        `glpi_plugin_manufacturersimports_logs`.`items_id`,
-                        `glpi_plugin_manufacturersimports_logs`.`itemtype`,
-                        `glpi_plugin_manufacturersimports_logs`.`documents_id`,
-                        `glpi_plugin_manufacturersimports_logs`.`date_import`,
-                        '" . $p['itemtype'] . "' AS type,
-                        `$modeltable`.`name` AS model_name
-                  FROM `" . $itemtable . "` ";
+        if (!in_array($p['itemtype'], Config::$types, true)) {
+            return $DB->request(['FROM' => $itemtable, 'LIMIT' => 0]);
+        }
+        $p['manufacturers_id'] = (int) $p['manufacturers_id'];
 
-        //model device left join
-        $query .= "LEFT JOIN `$modeltable` ON (`$modeltable`.`id` = `" . $itemtable . "`.`" . $modelfield . "`) ";
-        $query .= " LEFT JOIN `glpi_entities` ON (`glpi_entities`.`id` = `" . $itemtable . "`.`entities_id`)";
-        $query .= " LEFT JOIN `glpi_plugin_manufacturersimports_configs`
-         ON (`glpi_plugin_manufacturersimports_configs`.`manufacturers_id` = `" . $itemtable . "`.`manufacturers_id`)";
-        $query .= " LEFT JOIN `glpi_plugin_manufacturersimports_logs`
-         ON (`glpi_plugin_manufacturersimports_logs`.`items_id` = `" . $itemtable . "`.`id`
-         AND `glpi_plugin_manufacturersimports_logs`.`itemtype` = '" . $p['itemtype'] . "')";
+        $where = [
+            "$itemtable.is_deleted"                          => 0,
+            "$itemtable.is_template"                         => 0,
+            'glpi_plugin_manufacturersimports_configs.id'    => $p['manufacturers_id'],
+            ["$itemtable.serial"                             => ['!=', '']],
+        ];
 
-        //serial must be not empty
-        $query .= " WHERE `" . $itemtable . "`.`is_deleted` = '0'
-          AND `" . $itemtable . "`.`is_template` = '0'
-          AND `glpi_plugin_manufacturersimports_configs`.`id` = '" . $p['manufacturers_id'] . "'
-          AND `" . $itemtable . "`.`serial` != '' ";
-        //already imported
         if ($p['imported'] == self::IMPORTED) {
-            $query .= " AND `import_status` != " . self::IMPORTED . "";
-            //not imported
+            $where[] = ['glpi_plugin_manufacturersimports_logs.import_status' => 1];
         } elseif ($p['imported'] == self::NOT_IMPORTED) {
-            $query .= " AND (`date_import` IS NULL OR `import_status` = " . self::IMPORTED . " ";
-            $query .= ") ";
+            if ($isCron) {
+                // Cron retries previously failed imports as well
+                $where[] = ['OR' => [
+                    ['glpi_plugin_manufacturersimports_logs.date_import'    => null],
+                    ['glpi_plugin_manufacturersimports_logs.import_status'  => 2],
+                ]];
+            } else {
+                $where[] = ['glpi_plugin_manufacturersimports_logs.date_import' => null];
+            }
+        } elseif ($p['imported'] == self::IMPORT_ERROR) {
+            $where[] = ['glpi_plugin_manufacturersimports_logs.import_status' => 2];
         }
-        $entities = "";
-        if ($config->isRecursive()) {
-            $entities = $dbu->getSonsOf('glpi_entities', $config->getEntityID());
-        } else {
-            $entities = $config->getEntityID();
-        }
-        if (!$isCron) {
-            $query .= "" . $dbu->getEntitiesRestrictRequest(" AND", $itemtable, '', '', $item->maybeRecursive());
-        }
-        //// 4 - ORDER
-        $ORDER = " ORDER BY `entities_id`,`" . $itemtable . "`.`name` ";
 
+        if (!$isCron) {
+            $where = array_merge(
+                $where,
+                $dbu->getEntitiesRestrictCriteria($itemtable, '', '', $item->maybeRecursive())
+            );
+        }
+
+        $order = new QueryExpression("`entities_id`,`$itemtable`.`name`");
         foreach ($toview as $key => $val) {
             if ($p['sort'] == $val) {
-                $ORDER = self::addOrderBy($p['itemtype'], $p['sort'], $p['order'], $key);
+                $raw   = trim(self::addOrderBy($p['itemtype'], $p['sort'], $p['order'], $key));
+                $order = new QueryExpression(preg_replace('/^ORDER BY\s+/i', '', $raw));
             }
         }
-        $query .= $ORDER;
 
-        return $query;
+        return $DB->request([
+            'SELECT'    => [
+                "$itemtable.id",
+                "$itemtable.name",
+                "$itemtable.serial",
+                "$itemtable.$modelfield",
+                "$itemtable.entities_id",
+                'glpi_plugin_manufacturersimports_logs.import_status',
+                'glpi_plugin_manufacturersimports_logs.items_id',
+                'glpi_plugin_manufacturersimports_logs.itemtype',
+                'glpi_plugin_manufacturersimports_logs.documents_id',
+                'glpi_plugin_manufacturersimports_logs.date_import',
+                new QueryExpression($DB::quoteValue($p['itemtype']) . ' AS `type`'),
+                "$modeltable.name AS model_name",
+            ],
+            'FROM'      => $itemtable,
+            'LEFT JOIN' => [
+                $modeltable => [
+                    'ON' => [$modeltable => 'id', $itemtable => $modelfield],
+                ],
+                'glpi_entities' => [
+                    'ON' => ['glpi_entities' => 'id', $itemtable => 'entities_id'],
+                ],
+                'glpi_plugin_manufacturersimports_configs' => [
+                    'ON' => [
+                        'glpi_plugin_manufacturersimports_configs' => 'manufacturers_id',
+                        $itemtable                                 => 'manufacturers_id',
+                    ],
+                ],
+                'glpi_plugin_manufacturersimports_logs' => [
+                    'ON' => [
+                        'glpi_plugin_manufacturersimports_logs' => 'items_id',
+                        $itemtable                              => 'id',
+                        ['AND' => ['glpi_plugin_manufacturersimports_logs.itemtype' => $p['itemtype']]],
+                    ],
+                ],
+            ],
+            'WHERE'     => $where,
+            'ORDER'     => $order,
+        ]);
     }
 
     /**
@@ -1020,7 +1089,7 @@ class PreImport extends CommonDBTM
 
         echo "<td width='50%' class='tab_bg_2 b'>";
         //TRANS: %1$d, %2$d, %3$d are page numbers
-        printf(__('From %1$d to %2$d on %3$d'), $current_start, $current_end, $numrows);
+        printf(__('From %1$d to %2$d on %3$d', 'manufacturersimports'), $current_start, $current_end, $numrows);
         echo "</td>\n";
 
         // Forward and fast forward button

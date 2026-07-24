@@ -1,29 +1,29 @@
 <?php
+
 /*
- * @version $Id: HEADER 15930 2011-10-30 15:47:55Z tsmr $
  -------------------------------------------------------------------------
- Manufacturersimports plugin for GLPI
- Copyright (C) 2003-2016 by the Manufacturersimports Development Team.
+ manufacturersimports plugin for GLPI
+ Copyright (C) 2015-2026 by the manufacturersimports Development Team.
 
  https://github.com/InfotelGLPI/manufacturersimports
  -------------------------------------------------------------------------
 
  LICENSE
 
- This file is part of Manufacturersimports.
+ This file is part of manufacturersimports.
 
- Manufacturersimports is free software; you can redistribute it and/or modify
+ manufacturersimports is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 2 of the License, or
+ the Free Software Foundation; either version 3 of the License, or
  (at your option) any later version.
 
- Manufacturersimports is distributed in the hope that it will be useful,
+ manufacturersimports is distributed in the hope that it will be useful,
  but WITHOUT ANY WARRANTY; without even the implied warranty of
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  GNU General Public License for more details.
 
  You should have received a copy of the GNU General Public License
- along with Manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
  --------------------------------------------------------------------------
  */
 
@@ -61,6 +61,115 @@ if (isset($_POST["add"])) {
     Session::checkRight("plugin_manufacturersimports", PURGE);
     $config->delete($_POST, true);
     Html::redirect("./config.php");
+
+} else if (isset($_POST["test_connection"])) {
+    // Reaching out to an arbitrary URL server-side requires the plugin update
+    // right, not merely being logged in (defends against SSRF).
+    Session::checkRight("plugin_manufacturersimports", UPDATE);
+    // CSRF is already validated (and preserved) by CheckCsrfListener for XHR requests.
+    header("Content-Type: application/json; charset=UTF-8");
+
+    $token_url = trim($_POST['token_url'] ?? '');
+    $test_mode = trim($_POST['test_mode'] ?? 'head');
+
+    if (empty($token_url)) {
+        echo json_encode(['success' => false, 'message' => __('Token URL is empty', 'manufacturersimports')]);
+        exit;
+    }
+    // Reject non-https URLs and hosts resolving to private/reserved IPs (SSRF).
+    if (!Config::isSafeApiUrl($token_url)) {
+        echo json_encode(['success' => false, 'message' => __('Invalid or forbidden URL', 'manufacturersimports')]);
+        exit;
+    }
+    if (!function_exists('curl_init')) {
+        echo json_encode(['success' => false, 'message' => __('Curl PHP package not installed', 'manufacturersimports')]);
+        exit;
+    }
+
+    global $CFG_GLPI;
+
+    if ($test_mode === 'oauth') {
+        $supplier_key    = trim($_POST['supplier_key'] ?? '');
+        $supplier_secret = trim($_POST['supplier_secret'] ?? '');
+
+        $ch = curl_init($token_url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/x-www-form-urlencoded']);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
+            'client_id'     => $supplier_key,
+            'client_secret' => $supplier_secret,
+            'grant_type'    => 'client_credentials',
+        ]));
+        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+        curl_setopt($ch, CURLOPT_USERPWD, $supplier_key . ':' . $supplier_secret);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        // Pin the host to the IP validated above (DNS-rebinding TOCTOU defence);
+        // empty when a proxy is configured (the proxy resolves the host itself).
+        $resolve = Config::getPinnedResolve($token_url);
+        if (!empty($resolve)) {
+            curl_setopt($ch, CURLOPT_RESOLVE, $resolve);
+        }
+        if (!empty($CFG_GLPI['proxy_name'])) {
+            curl_setopt($ch, CURLOPT_PROXY, $CFG_GLPI['proxy_name'] . ':' . $CFG_GLPI['proxy_port']);
+            if (!empty($CFG_GLPI['proxy_user'])) {
+                curl_setopt($ch, CURLOPT_PROXYUSERPWD, $CFG_GLPI['proxy_user'] . ':' . (new GLPIKey())->decrypt($CFG_GLPI['proxy_passwd']));
+            }
+        }
+        $response   = curl_exec($ch);
+        $http_code  = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_error = curl_error($ch);
+        curl_close($ch);
+
+        if ($curl_error !== '') {
+            echo json_encode(['success' => false, 'message' => $curl_error]);
+            exit;
+        }
+
+        $data = json_decode($response, true);
+        if (isset($data['access_token'])) {
+            echo json_encode(['success' => true, 'message' => __('Authentication successful (token received)', 'manufacturersimports')]);
+        } else {
+            $api_error = $data['error_description'] ?? $data['error'] ?? __('No access token in response', 'manufacturersimports');
+            echo json_encode(['success' => false, 'message' => sprintf('HTTP %d — %s', $http_code, $api_error)]);
+        }
+        exit;
+    }
+
+    // HEAD reachability test (supplier_url for Fujitsu, Toshiba, Wortmann, Lenovo).
+    $ch = curl_init($token_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_NOBODY, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    // Do not follow redirects: a public host could otherwise bounce us to an
+    // internal target, bypassing the URL validation above.
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+    // Pin the host to the IP validated above (DNS-rebinding TOCTOU defence);
+    // empty when a proxy is configured (the proxy resolves the host itself).
+    $resolve = Config::getPinnedResolve($token_url);
+    if (!empty($resolve)) {
+        curl_setopt($ch, CURLOPT_RESOLVE, $resolve);
+    }
+    if (!empty($CFG_GLPI['proxy_name'])) {
+        curl_setopt($ch, CURLOPT_PROXY, $CFG_GLPI['proxy_name'] . ':' . $CFG_GLPI['proxy_port']);
+        if (!empty($CFG_GLPI['proxy_user'])) {
+            curl_setopt($ch, CURLOPT_PROXYUSERPWD, $CFG_GLPI['proxy_user'] . ':' . (new GLPIKey())->decrypt($CFG_GLPI['proxy_passwd']));
+        }
+    }
+    curl_exec($ch);
+    $http_code  = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
+    curl_close($ch);
+
+    if ($curl_error !== '' || $http_code === 0) {
+        $msg = $curl_error !== '' ? $curl_error : __('No response from server', 'manufacturersimports');
+        echo json_encode(['success' => false, 'message' => $msg]);
+    } else {
+        echo json_encode(['success' => true, 'message' => sprintf(__('Server reachable (HTTP %d)', 'manufacturersimports'), $http_code)]);
+    }
+    exit;
 
 } else if (isset($_POST["retrieve_warranty"])) {
     Session::checkRight("plugin_manufacturersimports", UPDATE);
