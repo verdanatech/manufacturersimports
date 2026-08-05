@@ -27,6 +27,7 @@
  --------------------------------------------------------------------------
  */
 
+use Glpi\Application\View\TemplateRenderer;
 use GlpiPlugin\Manufacturersimports\Config;
 use GlpiPlugin\Manufacturersimports\Menu;
 
@@ -36,9 +37,11 @@ if (Plugin::isPluginActive("manufacturersimports")) {
    Html::header(__('Setup'), '', "tools", Menu::class, "config");
    Search::show(Config::class);
 } else {
-   Html::header(__('Setup'), '', "config", "plugin");
-   echo "<div class='alert alert-important alert-warning d-flex'>";
-   echo "<b>".__('Please activate the plugin', 'manufacturersimports')."</b></div>";
+    Html::header(__s('Setup'), '', "config", "plugin");
+    TemplateRenderer::getInstance()->display('@manufacturersimports/plugin_inactive.html.twig', [
+        'message' => __('Please activate the plugin', 'manufacturersimports'),
+    ]);
+    Html::footer();
 }
 
 Html::footer();
