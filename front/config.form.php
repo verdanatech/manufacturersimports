@@ -1,30 +1,30 @@
 <?php
 
-/*
- -------------------------------------------------------------------------
- manufacturersimports plugin for GLPI
- Copyright (C) 2015-2026 by the manufacturersimports Development Team.
-
- https://github.com/InfotelGLPI/manufacturersimports
- -------------------------------------------------------------------------
-
- LICENSE
-
- This file is part of manufacturersimports.
-
- manufacturersimports is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
-
- manufacturersimports is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
  */
 
 use GlpiPlugin\Manufacturersimports\Config;
@@ -40,29 +40,34 @@ if (!isset($_GET["preconfig"])) {
 $config = new Config();
 
 if (isset($_POST["add"])) {
-    Session::checkRight("plugin_manufacturersimports", CREATE);
+    // check() validates the global right AND the entity the record is submitted
+    // into: the plugin right alone says nothing about the targeted perimeter.
+    $config->check(-1, CREATE, $_POST);
     $config->add($_POST);
     Html::back();
 
-} else if (isset($_POST["update"])) {
+} elseif (isset($_POST["update"])) {
 
-    Session::checkRight("plugin_manufacturersimports", UPDATE);
+    // Re-check the targeted record: CommonDBTM::update() reloads the row by id
+    // without any rights or entity test, so a bare checkRight() would let a
+    // delegated administrator rewrite another entity's configuration.
+    $config->check((int) ($_POST["id"] ?? -1), UPDATE, $_POST);
     $config->update($_POST);
     Html::back();
 
-} else if (isset($_POST["delete"])) {
+} elseif (isset($_POST["delete"])) {
 
-    Session::checkRight("plugin_manufacturersimports", PURGE);
+    $config->check((int) ($_POST["id"] ?? -1), PURGE);
     $config->delete($_POST, true);
     Html::redirect("./config.php");
 
-} else if (isset($_POST["purge"])) {
+} elseif (isset($_POST["purge"])) {
 
-    Session::checkRight("plugin_manufacturersimports", PURGE);
+    $config->check((int) ($_POST["id"] ?? -1), PURGE);
     $config->delete($_POST, true);
     Html::redirect("./config.php");
 
-} else if (isset($_POST["test_connection"])) {
+} elseif (isset($_POST["test_connection"])) {
     // Reaching out to an arbitrary URL server-side requires the plugin update
     // right, not merely being logged in (defends against SSRF).
     Session::checkRight("plugin_manufacturersimports", UPDATE);
@@ -105,6 +110,10 @@ if (isset($_POST["add"])) {
         curl_setopt($ch, CURLOPT_USERPWD, $supplier_key . ':' . $supplier_secret);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        // Do not follow redirects: a public host could otherwise bounce us to an
+        // internal target, bypassing the URL validation above (consistent with the
+        // HEAD test and the production cURL calls).
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         // Pin the host to the IP validated above (DNS-rebinding TOCTOU defence);
         // empty when a proxy is configured (the proxy resolves the host itself).
         $resolve = Config::getPinnedResolve($token_url);
@@ -171,7 +180,7 @@ if (isset($_POST["add"])) {
     }
     exit;
 
-} else if (isset($_POST["retrieve_warranty"])) {
+} elseif (isset($_POST["retrieve_warranty"])) {
     Session::checkRight("plugin_manufacturersimports", UPDATE);
 
     Config::retrieveOneWarranty($_POST["itemtype"], $_POST["items_id"]);

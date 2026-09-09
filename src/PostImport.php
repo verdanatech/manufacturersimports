@@ -1,30 +1,30 @@
 <?php
 
-/*
- -------------------------------------------------------------------------
- manufacturersimports plugin for GLPI
- Copyright (C) 2015-2026 by the manufacturersimports Development Team.
-
- https://github.com/InfotelGLPI/manufacturersimports
- -------------------------------------------------------------------------
-
- LICENSE
-
- This file is part of manufacturersimports.
-
- manufacturersimports is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
-
- manufacturersimports is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
  */
 
 namespace GlpiPlugin\Manufacturersimports;
@@ -221,6 +221,41 @@ class PostImport extends CommonDBTM
             $data = curl_exec($ch);
         }
 
+        // Lenovo exception (github issue #168): the warranty payload is only
+        // served after an HTTP redirect to a region-scoped URL on the SAME host
+        // (e.g. adding /xx/en/ to the path). CURLOPT_FOLLOWLOCATION stays off
+        // globally for SSRF safety, so we follow Lenovo's redirect(s) manually
+        // here and re-apply the entry guard on every hop: refuse any target that
+        // leaves the validated origin host or no longer resolves to a public IP,
+        // and re-pin the resolved IP so curl cannot be bounced to an internal
+        // target between hops.
+        if (!$options["download"]
+            && $options['suppliername'] == Config::LENOVO) {
+            $origin_host = parse_url($url, PHP_URL_HOST);
+            $max_hops    = 5;
+            while ($max_hops-- > 0) {
+                $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                if ($http_code < 300 || $http_code >= 400) {
+                    break; // not a redirect: $data already holds the final body
+                }
+                $next = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+                if ($next === ''
+                    || parse_url($next, PHP_URL_HOST) !== $origin_host
+                    || !Config::isSafeApiUrl($next)) {
+                    // Unresolvable, cross-host or internal target: abort rather
+                    // than follow it (behaves like the pre-fix failed fetch).
+                    $data = false;
+                    break;
+                }
+                curl_setopt($ch, CURLOPT_URL, $next);
+                $next_pin = Config::getPinnedResolve($next);
+                if (!empty($next_pin)) {
+                    curl_setopt($ch, CURLOPT_RESOLVE, $next_pin);
+                }
+                $data = curl_exec($ch);
+            }
+        }
+
         if (
             isset($_SESSION['glpi_use_mode'])
             && ($_SESSION['glpi_use_mode'] == Session::DEBUG_MODE)
@@ -256,8 +291,12 @@ class PostImport extends CommonDBTM
      */
     public static function massiveimport($values)
     {
-        $config = new Config();
-        $config->getFromDB($values['manufacturers_id']);
+        // The config id comes from the request: check the entity perimeter before
+        // the progress page is built on another entity's configuration.
+        $config = Config::getCheckedConfig($values['manufacturers_id']);
+        if ($config === null) {
+            throw new AccessDeniedHttpException();
+        }
 
         $back_url  = PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/front/import.php?back=back'
                      . '&itemtype=' . urlencode($values['itemtype'])
@@ -283,7 +322,7 @@ class PostImport extends CommonDBTM
         $itemtype = $values['itemtype'] ?? '';
         // Only the itemtypes handled by this plugin are acceptable before we
         // derive any table/class from this user-supplied value.
-        if (!in_array($itemtype, Config::$types, true)) {
+        if (!in_array($itemtype, Config::getTypes(true), true)) {
             throw new AccessDeniedHttpException();
         }
 
@@ -300,7 +339,7 @@ class PostImport extends CommonDBTM
             $step++;
             $progress->setCurrentStep($step);
             $progress->setProgressBarMessage(
-                sprintf(__('Importing device %1$d of %2$d', 'manufacturersimports'), $step, $total_items)
+                sprintf(__('Importing device %1$d of %2$d', 'manufacturersimports'), $step, $total_items),
             );
 
             $item = getItemForItemtype($itemtype);
@@ -309,7 +348,7 @@ class PostImport extends CommonDBTM
             if (!$item || !$item->can((int) $key, UPDATE)) {
                 $progress->addMessage(
                     MessageType::Error,
-                    sprintf(__('Device %d skipped (access denied)', 'manufacturersimports'), (int) $key)
+                    sprintf(__('Device %d skipped (access denied)', 'manufacturersimports'), (int) $key),
                 );
                 continue;
             }
@@ -321,19 +360,19 @@ class PostImport extends CommonDBTM
                     $key,
                     $values["to_suppliers_id$key"] ?? 0,
                     $values["to_warranty_duration$key"] ?? 0,
-                    $values['manufacturers_id']
+                    $values['manufacturers_id'],
                 );
 
                 if ($result['success']) {
                     $total_imported++;
                     $progress->addMessage(
                         MessageType::Success,
-                        $result['name'] . ' — ' . __('Import OK', 'manufacturersimports')
+                        $result['name'] . ' — ' . __('Import OK', 'manufacturersimports'),
                     );
                 } else {
                     $progress->addMessage(
                         MessageType::Error,
-                        $result['name'] . ' — ' . __('Import failed', 'manufacturersimports')
+                        $result['name'] . ' — ' . __('Import failed', 'manufacturersimports'),
                     );
                 }
             }
@@ -342,7 +381,7 @@ class PostImport extends CommonDBTM
         $progress->setCurrentStep($total_items);
         $progress->addMessage(
             MessageType::Notice,
-            sprintf(__('Total number of devices imported %s', 'manufacturersimports'), $total_imported)
+            sprintf(__('Total number of devices imported %s', 'manufacturersimports'), $total_imported),
         );
     }
 
@@ -360,8 +399,19 @@ class PostImport extends CommonDBTM
     ): array {
         global $DB;
 
-        $config = new Config();
-        $config->getFromDB($configID);
+        // The itemtype reaches this method from the request: keep it inside the
+        // supported list before it is used as a table name and as a class in
+        // static calls below.
+        if (!in_array($type, Config::getTypes(true), true)) {
+            return ['name' => "#{$ID}", 'serial' => '', 'success' => false];
+        }
+
+        // The config id comes from the request: check the entity perimeter before
+        // its credentials are decrypted and used for the outbound call.
+        $config = Config::getCheckedConfig($configID);
+        if ($config === null) {
+            return ['name' => "#{$ID}", 'serial' => '', 'success' => false];
+        }
         $manufacturerId = $config->fields['manufacturers_id'];
         $suppliername   = $config->fields['name'];
         $supplierUrl    = $config->fields['supplier_url'];
@@ -397,20 +447,20 @@ class PostImport extends CommonDBTM
                 // Defence in depth: never select an item outside the caller's
                 // entity perimeter, even if the can() gate upstream is bypassed.
                 $dbu->getEntitiesRestrictCriteria($itemtable),
+                // Every custom asset definition shares glpi_assets_assets, so the
+                // id alone does not identify the type: pin the query to the
+                // definition $type belongs to. No-op for the classic itemtypes.
+                $type::getSystemSQLCriteria($itemtable),
             ],
             'ORDER'      => new QueryExpression("`$itemtable`.`name`"),
         ]);
 
-        $allowed_suppliers = [
-            Config::DELL, Config::HP, Config::FUJITSU,
-            Config::LENOVO, Config::TOSHIBA, Config::WORTMANN_AG,
-        ];
-        if (!in_array($suppliername, $allowed_suppliers, true)) {
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
             return ['name' => "#{$ID}", 'serial' => '', 'success' => false];
         }
-
-        $supplierclass = 'GlpiPlugin\\Manufacturersimports\\Manufacturers\\' . $suppliername;
-        $token         = $supplierclass::getToken($config);
+        $token = $supplierclass::getToken($config);
 
         $result = ['name' => "#{$ID}", 'serial' => '', 'success' => false];
 
@@ -469,10 +519,11 @@ class PostImport extends CommonDBTM
     public static function selectSupplierField($suppliername)
     {
         $field = '';
-        if (!empty($suppliername)) {
-            $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
-            $supplier      = new $supplierclass();
-            $field         = $supplier->getSearchField();
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass !== null) {
+            $supplier = new $supplierclass();
+            $field    = $supplier->getSearchField();
         }
 
         return $field;
@@ -486,9 +537,13 @@ class PostImport extends CommonDBTM
      */
     public static function importDate($suppliername, $contents)
     {
-        $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
-        $supplier      = new $supplierclass();
-        $importDate    = $supplier->getBuyDate($contents);
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
+        $supplier   = new $supplierclass();
+        $importDate = $supplier->getBuyDate($contents);
 
         return $importDate;
     }
@@ -501,7 +556,11 @@ class PostImport extends CommonDBTM
      */
     public static function importStartDate($suppliername, $contents)
     {
-        $supplierclass   = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
         $supplier        = new $supplierclass();
         $importStartDate = $supplier->getStartDate($contents);
 
@@ -516,7 +575,11 @@ class PostImport extends CommonDBTM
      */
     public static function importWarrantyInfo($suppliername, $contents)
     {
-        $supplierclass      = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
         $supplier           = new $supplierclass();
         $importWarrantyInfo = $supplier->getWarrantyInfo($contents);
 
@@ -556,9 +619,13 @@ class PostImport extends CommonDBTM
      */
     public static function importDateFin($suppliername, $contents)
     {
-        $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
-        $supplier      = new $supplierclass();
-        $maDateFin     = $supplier->getExpirationDate($contents);
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
+        $supplier  = new $supplierclass();
+        $maDateFin = $supplier->getExpirationDate($contents);
 
         return $maDateFin;
     }
@@ -572,15 +639,26 @@ class PostImport extends CommonDBTM
      * @param $fromwarranty selection on pre import
      * @param $configID ID of supplier plugin config
      *
-     * @return results of data import
+     * @return void
      *
      */
     public static function seePostImport($type, $ID, $fromsupplier, $fromwarranty, $configID)
     {
         global $DB;
 
-        $config = new Config();
-        $config->getFromDB($configID);
+        // The itemtype reaches this method from the request: keep it inside the
+        // supported list before it is used as a table name and as a class in
+        // static calls below.
+        if (!in_array($type, Config::getTypes(true), true)) {
+            return;
+        }
+
+        // The config id comes from the request: check the entity perimeter before
+        // its credentials are decrypted and used for the outbound call.
+        $config = Config::getCheckedConfig($configID);
+        if ($config === null) {
+            return;
+        }
         $manufacturerId = $config->fields["manufacturers_id"];
 
         if ($fromsupplier) {
@@ -621,22 +699,26 @@ class PostImport extends CommonDBTM
                 // Defence in depth: never select an item outside the caller's
                 // entity perimeter, even if the can() gate upstream is bypassed.
                 $dbu->getEntitiesRestrictCriteria($itemtable),
+                // Every custom asset definition shares glpi_assets_assets, so the
+                // id alone does not identify the type: pin the query to the
+                // definition $type belongs to. No-op for the classic itemtypes.
+                $type::getSystemSQLCriteria($itemtable),
             ],
             'ORDER'      => new QueryExpression("`$itemtable`.`name`"),
         ]);
 
-        $allowed_suppliers = [Config::DELL, Config::HP, Config::FUJITSU, Config::LENOVO, Config::TOSHIBA, Config::WORTMANN_AG];
-        if (!in_array($suppliername, $allowed_suppliers, true)) {
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
             return;
         }
-        $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
-        $token         = $supplierclass::getToken($config);
+        $token = $supplierclass::getToken($config);
 
         foreach ($iterator as $line) {
             $compSerial = $line['serial'];
             $ID         = $line['id'];
             echo "<tr class='tab_bg_1' ><td>";
-            $link        = Toolbox::getItemTypeFormURL($type);
+            $link        = Config::getItemFormLink($type, (int) $ID);
             $dID         = "";
 
             $models_id = $line[$modelfield];
@@ -652,7 +734,7 @@ class PostImport extends CommonDBTM
             if ($_SESSION["glpiis_ids_visible"] || empty($line["name"])) {
                 $dID .= " (" . $line["id"] . ")";
             }
-            echo "<a href='" . htmlescape($link) . "?id=" . (int) $ID . "'>" . htmlescape($line["name"]) . htmlescape($dID) . "</a><br>" . htmlescape($otherSerial) . "</td>";
+            echo "<a href='" . htmlescape($link) . "'>" . htmlescape($line["name"]) . htmlescape($dID) . "</a><br>" . htmlescape($otherSerial) . "</td>";
 
             $url          = PreImport::selectSupplier(
                 $suppliername,
@@ -660,14 +742,14 @@ class PostImport extends CommonDBTM
                 $compSerial,
                 $otherSerial,
                 $supplierkey,
-                $supplierSecret
+                $supplierSecret,
             );
             $post         = PreImport::getSupplierPost(
                 $suppliername,
                 $compSerial,
                 $otherSerial,
                 $supplierkey,
-                $supplierSecret
+                $supplierSecret,
             );
             $warranty_url = $supplierclass::getWarrantyUrl($config, $compSerial);
 
@@ -869,7 +951,7 @@ class PostImport extends CommonDBTM
                     'itemtype'      => $values['type'],
                     'import_status' => 2,
                     'LIMIT'         => 1,
-                ]
+                ],
             );
             if (isset($_SESSION["glpi_plugin_manufacturersimports_total"])) {
                 $_SESSION["glpi_plugin_manufacturersimports_total"] += 1;
@@ -954,7 +1036,9 @@ class PostImport extends CommonDBTM
             echo "<td>";
             echo _n('Supplier', 'Suppliers', 1) . ": ";
             if ($options["supplierId"] != 0) {
-                echo $suppliers_id . "->" . Dropdown::getDropdownName("glpi_suppliers", $options["supplierId"]) . "<br>";
+                // getDropdownName() returns the unescaped DB value: escape before echo.
+                echo htmlescape($suppliers_id) . "->"
+                     . htmlescape(Dropdown::getDropdownName("glpi_suppliers", $options["supplierId"])) . "<br>";
             }
             echo __('Date of purchase') . ": ";
             echo Html::convdate($buy_date) . "->" . Html::convdate($options["buyDate"]) . "<br>";
@@ -1003,9 +1087,15 @@ class PostImport extends CommonDBTM
                 break;
         }
 
+        // Neutralize the supplier name as a path component: it originates from the
+        // free "name" field of the configuration and is concatenated into a file
+        // path under GLPI_DOC_DIR/_uploads/. Strip anything but word chars so a
+        // value carrying a path separator can never escape the uploads directory,
+        // independently of the whitelist guards enforced by the callers.
+        $safe_suppliername = preg_replace('/[^A-Za-z0-9_]/', '', (string) $options["suppliername"]);
         $filename
-           = "infocoms_" . $options["suppliername"]
-           . "_" . $name . "_" . $options["ID"] . ".html";
+           = "infocoms_" . $safe_suppliername
+           . "_" . $name . "_" . (int) $options["ID"] . ".html";
 
         //on enregistre
         $path     = GLPI_DOC_DIR . "/_uploads/";
@@ -1080,7 +1170,7 @@ class PostImport extends CommonDBTM
                         $msgerr = __('Connection failed/data download from manufacturer web site', 'manufacturersimports');
                 }
             }
-            echo "<td>$msgerr</td>";
+            echo "<td>" . htmlescape($msgerr) . "</td>";
         }
     }
 }

@@ -1,30 +1,30 @@
 <?php
 
-/*
- -------------------------------------------------------------------------
- manufacturersimports plugin for GLPI
- Copyright (C) 2015-2026 by the manufacturersimports Development Team.
-
- https://github.com/InfotelGLPI/manufacturersimports
- -------------------------------------------------------------------------
-
- LICENSE
-
- This file is part of manufacturersimports.
-
- manufacturersimports is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
-
- manufacturersimports is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
  */
 
 namespace GlpiPlugin\Manufacturersimports;
@@ -34,9 +34,11 @@ use CommonDBTM;
 use DbUtils;
 use Dropdown;
 use Glpi\Application\View\TemplateRenderer;
+use Glpi\Asset\AssetDefinitionManager;
 use Glpi\Exception\Http\AccessDeniedHttpException;
 use GLPIKey;
 use Html;
+use Infocom;
 use Session;
 use Toolbox;
 
@@ -172,7 +174,7 @@ class Config extends CommonDBTM
             if (filter_var(
                 $ip,
                 FILTER_VALIDATE_IP,
-                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE,
             ) === false) {
                 return false;
             }
@@ -229,6 +231,55 @@ class Config extends CommonDBTM
     public const TOSHIBA     = "Toshiba";
     public const WORTMANN_AG = "Wortmann_ag";
 
+    /**
+     * Single source of truth for the supported manufacturer names.
+     *
+     * @return string[]
+     */
+    public static function getAllowedSuppliers(): array
+    {
+        return [self::DELL, self::HP, self::FUJITSU, self::LENOVO, self::TOSHIBA, self::WORTMANN_AG];
+    }
+
+    /**
+     * Resolve a Manufacturers\* class from a supplier name. The name is free-form
+     * config data (editable by any user holding the plugin right), so it must be
+     * validated against the whitelist AND existence-checked before it is used in a
+     * `new $class()` expression, otherwise a bogus name triggers a fatal error.
+     *
+     * @param string $suppliername
+     * @return class-string|null the fully-qualified class name, or null if invalid
+     */
+    public static function resolveSupplierClass($suppliername): ?string
+    {
+        if (empty($suppliername) || !in_array($suppliername, self::getAllowedSuppliers(), true)) {
+            return null;
+        }
+        $class = "GlpiPlugin\\Manufacturersimports\\Manufacturers\\" . $suppliername;
+        return class_exists($class) ? $class : null;
+    }
+
+    /**
+     * Load a plugin configuration after checking the caller may read it from its
+     * own entity perimeter. The config id always comes from the request, and the
+     * rows are entity-scoped: holding the plugin right in one entity says nothing
+     * about another entity's row, whose (decrypted) API credentials would
+     * otherwise be used for the outbound manufacturer call.
+     *
+     * @param mixed $configID
+     * @return self|null the loaded config, or null when it is unreadable here
+     */
+    public static function getCheckedConfig($configID): ?self
+    {
+        $config = new self();
+        // can() loads the row itself and returns false when it does not exist
+        // or falls outside the caller's entities.
+        if (!$config->can((int) $configID, READ)) {
+            return null;
+        }
+        return $config;
+    }
+
     public static function getTypeName($nb = 0)
     {
         return _n('Manufacturer', 'Manufacturers', $nb);
@@ -263,7 +314,13 @@ class Config extends CommonDBTM
             case self::LENOVO:
             case self::TOSHIBA:
             case self::WORTMANN_AG:
-                $supplierclass = "GlpiPlugin\Manufacturersimports\Manufacturers\\".$suppliername;
+                // Whitelisted above by the switch, but existence-check before `new`
+                // to stay fatal-safe if a manufacturer class is ever renamed/removed.
+                $supplierclass = self::resolveSupplierClass($suppliername);
+                if ($supplierclass === null) {
+                    $this->post_getEmpty();
+                    break;
+                }
                 $supplier                     = new $supplierclass();
                 $infos                        = $supplier->getSupplierInfo();
                 $this->fields["name"]         = $infos["name"];
@@ -302,8 +359,8 @@ class Config extends CommonDBTM
                 $dbu->getEntitiesRestrictCriteria(
                     $this->getTable(),
                     '',
-                    $dbu->getSonsOf("glpi_entities", $this->fields["entities_id"])
-                )
+                    $dbu->getSonsOf("glpi_entities", $this->fields["entities_id"]),
+                ),
             );
             $DB->delete($this->getTable(), $criteria);
         }
@@ -323,8 +380,8 @@ class Config extends CommonDBTM
                 $dbu->getEntitiesRestrictCriteria(
                     $this->getTable(),
                     '',
-                    $dbu->getSonsOf("glpi_entities", $this->fields["entities_id"])
-                )
+                    $dbu->getSonsOf("glpi_entities", $this->fields["entities_id"]),
+                ),
             );
             $DB->delete($this->getTable(), $criteria);
         }
@@ -487,8 +544,9 @@ class Config extends CommonDBTM
         $base_url    = '';
         $test_mode   = '';
 
-        $supplier_class = "GlpiPlugin\\Manufacturersimports\\Manufacturers\\" . $supplier_name;
-        if ($supplier_name !== '' && class_exists($supplier_class)) {
+        // Whitelist + class_exists() in one place, like every other call site.
+        $supplier_class = self::resolveSupplierClass($supplier_name);
+        if ($supplier_class !== null) {
             $supplier_obj = new $supplier_class();
             $test_field   = $supplier_obj->getTestUrlField();
             $is_api_test  = ($test_field === 'token_url');
@@ -502,6 +560,14 @@ class Config extends CommonDBTM
             $base_url     = $this->fields[$test_field] ?? '';
             $test_mode    = $is_api_test ? 'oauth' : 'head';
         }
+
+        // Only expose the decrypted API secrets to a caller allowed to edit this
+        // config. showForm() is reachable with READ alone (front/config.form.php
+        // display branch calls checkGlobal(READ)), so a read-only profile must not
+        // receive the cleartext client_id/secret in the rendered form. Editors keep
+        // the pre-filled value so prepareInputForUpdate()'s "empty = unchanged"
+        // round-trip is preserved and the stored secret is never wiped on save.
+        $can_edit = ($ID > 0) ? $this->can($ID, UPDATE) : static::canUpdate();
 
         TemplateRenderer::getInstance()->display('@manufacturersimports/config_form.html.twig', [
             'item'          => $this,
@@ -517,8 +583,8 @@ class Config extends CommonDBTM
             'base_url'      => $base_url,
             'test_mode'     => $test_mode,
             'action_url'    => self::getFormURL(true),
-            'supplier_key_value'    => self::decryptSecret($this->fields['supplier_key'] ?? ''),
-            'supplier_secret_value' => self::decryptSecret($this->fields['supplier_secret'] ?? ''),
+            'supplier_key_value'    => $can_edit ? self::decryptSecret($this->fields['supplier_key'] ?? '') : '',
+            'supplier_secret_value' => $can_edit ? self::decryptSecret($this->fields['supplier_secret'] ?? '') : '',
         ]);
 
         return true;
@@ -593,6 +659,74 @@ class Config extends CommonDBTM
 
 
     /**
+     * Build the URL of an item form, whatever its itemtype.
+     *
+     * Custom assets override getFormURL() to append the ?class= discriminator
+     * that identifies their definition, something the static
+     * Toolbox::getItemTypeFormURL() helper knows nothing about. The id must
+     * then be appended with the right separator.
+     *
+     * @param string $itemtype
+     * @param int    $items_id
+     * @return string
+     */
+    public static function getItemFormLink(string $itemtype, int $items_id): string
+    {
+        if (!is_a($itemtype, CommonDBTM::class, true)) {
+            return '';
+        }
+
+        $url = $itemtype::getFormURL();
+
+        return $url . (str_contains($url, '?') ? '&' : '?') . 'id=' . $items_id;
+    }
+
+    /**
+     * GLPI 11 custom asset classes the plugin can work with.
+     *
+     * A definition qualifies only when it provides everything an import needs:
+     *  - the financial information capacity, since warranties are written into
+     *    the item infocom. That capacity is precisely what registers the
+     *    concrete class into $CFG_GLPI['infocom_types'], which
+     *    Infocom::canApplyOn() reads back;
+     *  - the serial number field, which is what identifies the item for the
+     *    manufacturer;
+     *  - the manufacturer field, which is what binds the item to a plugin
+     *    configuration.
+     * Unlike the classic itemtypes, those fields are opt-in per definition, and
+     * an asset missing any of them could never be imported. Inactive
+     * definitions are skipped: their classes are not bootstrapped.
+     *
+     * @return array<class-string> concrete asset class names
+     */
+    public static function getCustomAssetTypes(): array
+    {
+        if (!class_exists(AssetDefinitionManager::class)) {
+            return [];
+        }
+
+        $types = [];
+        foreach (AssetDefinitionManager::getInstance()->getDefinitions(true) as $definition) {
+            $classname = $definition->getAssetClassName();
+            if (!class_exists($classname) || !Infocom::canApplyOn($classname)) {
+                continue;
+            }
+
+            $displayed_fields = $definition->getFieldOrder();
+            if (
+                !in_array('serial', $displayed_fields, true)
+                || !in_array('manufacturers_id', $displayed_fields, true)
+            ) {
+                continue;
+            }
+
+            $types[] = $classname;
+        }
+
+        return $types;
+    }
+
+    /**
      * Type than could be linked to a Rack
      *
      * @param $all boolean, all type, or only allowed ones
@@ -601,15 +735,21 @@ class Config extends CommonDBTM
      **/
     public static function getTypes($all = false)
     {
+        // Custom assets are appended on the fly: definitions can be created,
+        // activated or lose their infocom capacity at any time, so the list
+        // cannot be frozen in the static property.
+        $types = array_merge(self::$types, self::getCustomAssetTypes());
+
         if ($all) {
-            return self::$types;
+            return $types;
         }
 
         // Only allowed types
-        $types = self::$types;
-
         foreach ($types as $key => $itemtype) {
+            // A type registered by another plugin may no longer exist: drop it,
+            // callers instantiate whatever this list returns.
             if (!class_exists($itemtype)) {
+                unset($types[$key]);
                 continue;
             }
 
@@ -708,6 +848,14 @@ class Config extends CommonDBTM
                 if ($input['itemtype'] == Config::class) {
                     foreach ($input["item"] as $key => $val) {
                         if ($val == 1) {
+                            // Re-check the entity perimeter per item: CommonDBTM::update()
+                            // does not replay the right/entity control, so a forged
+                            // massive-action POST must not move a config record from an
+                            // entity the caller cannot access.
+                            if (!$this->can((int) $key, UPDATE)) {
+                                $res['noright']++;
+                                continue;
+                            }
                             $values["id"]          = $key;
                             $values["entities_id"] = $input['entities_id'];
                             if ($this->update($values)) {
@@ -780,7 +928,7 @@ class Config extends CommonDBTM
     {
         // Restrict to the itemtypes this plugin actually handles before touching
         // anything derived from the user-supplied itemtype.
-        if (!in_array($itemtype, self::$types, true)) {
+        if (!in_array($itemtype, self::getTypes(true), true)) {
             throw new AccessDeniedHttpException();
         }
         $item = getItemForItemtype($itemtype);
@@ -809,13 +957,13 @@ class Config extends CommonDBTM
                     $supplierUrl,
                     $item->fields['serial'],
                     $item->fields['otherserial'],
-                    $supplierkey
+                    $supplierkey,
                 );
 
                 $post = PreImport::getSupplierPost(
                     $suppliername,
                     $item->fields['serial'],
-                    $item->fields['otherserial']
+                    $item->fields['otherserial'],
                 );
 
                 $data    = [];
@@ -828,11 +976,11 @@ class Config extends CommonDBTM
                     "display" => false];
 
 
-                $allowed_suppliers = [self::DELL, self::HP, self::FUJITSU, self::LENOVO, self::TOSHIBA, self::WORTMANN_AG];
-                if (!in_array($suppliername, $allowed_suppliers, true)) {
+                // Static calls below still require a whitelisted, existing class.
+                $supplierclass = self::resolveSupplierClass($suppliername);
+                if ($supplierclass === null) {
                     return;
                 }
-                $supplierclass                  = "GlpiPlugin\Manufacturersimports\Manufacturers\\" . $suppliername;
                 $token                          = $supplierclass::getToken($config);
                 $warranty_url                   = $supplierclass::getWarrantyUrl($config, $item->fields['serial']);
                 $options['token']               = $token;
@@ -863,7 +1011,18 @@ class Config extends CommonDBTM
                     isset($_SESSION['glpi_use_mode'])
                     && ($_SESSION['glpi_use_mode'] == Session::DEBUG_MODE)
                 ) {
-                    Toolbox::loginfo($options);
+                    // Never dump $options as-is: it carries the freshly obtained
+                    // OAuth bearer token (replayable against the manufacturer API
+                    // until it expires) and the whole config object. Log only the
+                    // fields that are useful to diagnose an import.
+                    Toolbox::loginfo([
+                        'url'       => $options['url'] ?? '',
+                        'type'      => $options['type'] ?? '',
+                        'ID'        => $options['ID'] ?? '',
+                        'sn'        => $options['sn'] ?? '',
+                        'pn'        => $options['pn'] ?? '',
+                        'has_token' => !empty($options['token']),
+                    ]);
                 }
                 PostImport::saveImport($options);
             }
@@ -895,7 +1054,7 @@ class Config extends CommonDBTM
                         _sx('button', 'Retrieve warranty from manufacturer', 'manufacturersimports'),
                         ['itemtype' => $item->getType(),
                             'items_id' => $item->getID()],
-                        'ti-cloud-download'
+                        'ti-cloud-download',
                     );
                     echo "</div>";
                 }

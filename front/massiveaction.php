@@ -1,30 +1,30 @@
 <?php
 
-/*
- -------------------------------------------------------------------------
- manufacturersimports plugin for GLPI
- Copyright (C) 2015-2026 by the manufacturersimports Development Team.
-
- https://github.com/InfotelGLPI/manufacturersimports
- -------------------------------------------------------------------------
-
- LICENSE
-
- This file is part of manufacturersimports.
-
- manufacturersimports is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation; either version 3 of the License, or
- (at your option) any later version.
-
- manufacturersimports is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
-
- You should have received a copy of the GNU General Public License
- along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
- --------------------------------------------------------------------------
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
  */
 
 use Glpi\Exception\Http\AccessDeniedHttpException;
@@ -36,8 +36,6 @@ use GlpiPlugin\Manufacturersimports\PostImport;
 header("Content-Type: text/html; charset=UTF-8");
 Html::header_nocache();
 
-Session::checkLoginUser();
-
 $log = new Log();
 $config = new Config();
 
@@ -45,7 +43,7 @@ Html::header(
     _n('Suppliers import', 'Suppliers imports', 2, 'manufacturersimports'),
     $_SERVER['PHP_SELF'],
     "tools",
-    Menu::class
+    Menu::class,
 );
 
 $config->checkGlobal(UPDATE);
@@ -53,12 +51,15 @@ $config->checkGlobal(UPDATE);
 if (isset($_POST["action"])
     && isset($_POST["id"])
     && isset($_POST["item"])
+    // is_array() first: count() on a scalar is a TypeError (500) on PHP 8,
+    // as massiveimport_run.php already guards against.
+    && is_array($_POST["item"])
     && count($_POST["item"])) {
     switch ($_POST["action"]) {
         case "import":
             $itemtype = $_POST["itemtype"];
             // Only the itemtypes this plugin handles are acceptable here.
-            if (!in_array($itemtype, Config::$types, true)) {
+            if (!in_array($itemtype, Config::getTypes(true), true)) {
                 throw new AccessDeniedHttpException();
             }
             foreach ($_POST["item"] as $key => $val) {
@@ -77,7 +78,7 @@ if (isset($_POST["action"])
         case "reinit_once":
             $itemtype = $_POST["itemtype"];
             // Only the itemtypes this plugin handles are acceptable here.
-            if (!in_array($itemtype, Config::$types, true)) {
+            if (!in_array($itemtype, Config::getTypes(true), true)) {
                 throw new AccessDeniedHttpException();
             }
             foreach ($_POST["item"] as $key => $val) {
