@@ -1,0 +1,178 @@
+{#
+ # -------------------------------------------------------------------------
+ # manufacturersimports plugin for GLPI
+ # Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ #
+ # https://github.com/InfotelGLPI/manufacturersimports
+ # -------------------------------------------------------------------------
+ #
+ # LICENSE
+ #
+ # This file is part of manufacturersimports.
+ #
+ # manufacturersimports is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 3 of the License, or
+ # (at your option) any later version.
+ #
+ # manufacturersimports is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License
+ # along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ # --------------------------------------------------------------------------
+ #}
+
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+{% set params = params|default({})|merge({'target': action_url}) %}
+
+{# Preconfiguration card — outside the main form. A plain GET reload of the form page
+   with ?preconfig=<supplier>: it changes nothing server-side, hence no CSRF token #}
+<div class="card mb-3">
+    <form method="get" action="{{ action_url }}"
+          class="card-body d-flex align-items-center gap-3 flex-wrap">
+        <label class="fw-bold" for="preconfig_{{ preconfig_rand }}">{{ __('Preconfiguration') }}</label>
+        <select class="form-select w-auto" name="preconfig" id="preconfig_{{ preconfig_rand }}">
+            {% for key, label in suppliers %}
+                <option value="{{ key }}" {{ key == preconfig ? 'selected' : '' }}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary">{{ _x('button', 'Update') }}</button>
+    </form>
+</div>
+
+{# Main form wrapper — hidden for new items until a preconfig is selected #}
+<div id="show_form"{% if is_new and preconfig == -1 %} style="display:none;"{% endif %}>
+
+    {{ include('components/form/header.html.twig', {'no_header': true}) }}
+
+    <div class="card-body">
+        <div class="row">
+
+            {# Name: read-only display + hidden submit value #}
+            {{ fields.htmlField('_name', item.fields['name']|e, __('Name')) }}
+            {{ fields.hiddenField('name', item.fields['name']) }}
+
+            {# Linked GLPI manufacturer entry #}
+            {{ fields.dropdownField(
+                'Manufacturer',
+                'manufacturers_id',
+                item.fields['manufacturers_id'],
+                __('Manufacturer')
+            ) }}
+
+            {# Supplier base URL #}
+            {{ fields.urlField(
+                'supplier_url',
+                item.fields['supplier_url'],
+                __('Manufacturer web address', 'manufacturersimports')
+            ) }}
+
+            {# Dell / HP: OAuth token URL and warranty API URL #}
+            {% if item.fields['name'] in ['Dell', 'HP'] %}
+                {{ fields.urlField(
+                    'token_url',
+                    item.fields['token_url'],
+                    __('Access token API address', 'manufacturersimports')
+                ) }}
+                {{ fields.urlField(
+                    'warranty_url',
+                    item.fields['warranty_url'],
+                    __('Warranty API address', 'manufacturersimports')
+                ) }}
+            {% endif %}
+
+            {# Default GLPI supplier linked to this config #}
+            {{ fields.dropdownField(
+                'Supplier',
+                'suppliers_id',
+                item.fields['suppliers_id'],
+                __('Default supplier attached', 'manufacturersimports')
+            ) }}
+
+            {# Fujitsu: configurable warranty duration; all others: force 0 #}
+            {% if item.fields['name'] == 'Fujitsu' %}
+                {{ fields.dropdownNumberField(
+                    'warranty_duration',
+                    item.fields['warranty_duration'],
+                    __('New warranty affected by default (Replace if 0)', 'manufacturersimports'),
+                    {'min': 0, 'max': 120}
+                ) }}
+            {% else %}
+                {{ fields.hiddenField('warranty_duration', 0) }}
+            {% endif %}
+
+            {# Credentials — structure varies by supplier #}
+            {% if item.fields['name'] in ['Dell', 'HP'] %}
+                {{ fields.passwordField(
+                    'supplier_key',
+                    supplier_key_value,
+                    __('Client id', 'manufacturersimports'),
+                    {'is_disclosable': true, 'clearable': false}
+                ) }}
+                {{ fields.passwordField(
+                    'supplier_secret',
+                    supplier_secret_value,
+                    __('Client secret', 'manufacturersimports'),
+                    {'is_disclosable': true, 'clearable': false}
+                ) }}
+            {% elseif item.fields['name'] == 'Lenovo' %}
+                {{ fields.passwordField(
+                    'supplier_key',
+                    supplier_key_value,
+                    __('Client id', 'manufacturersimports'),
+                    {'is_disclosable': true, 'clearable': false}
+                ) }}
+            {% else %}
+                {{ fields.sliderField(
+                    'document_adding',
+                    item.fields['document_adding'],
+                    __('Auto add of document', 'manufacturersimports')
+                ) }}
+                {{ fields.dropdownField(
+                    'DocumentCategory',
+                    'documentcategories_id',
+                    item.fields['documentcategories_id'],
+                    __('Section for document records', 'manufacturersimports')
+                ) }}
+            {% endif %}
+
+            {# Connection test — only rendered when the supplier class exposes a testable URL #}
+            {% if test_field is not empty %}
+                {% set rand_test = random() %}
+                {% set test_btn %}
+                    <button type="button" class="btn btn-info"
+                            data-manufacturersimports-test="{{ action_url }}"
+                            data-result-id="test_result_{{ rand_test }}"
+                            data-test-field="{{ test_field }}"
+                            data-base-url="{{ base_url }}"
+                            data-test-mode="{{ test_mode }}">
+                        <i class="ti {{ test_icon }} me-1"></i>{{ test_label }}
+                    </button>
+                    <span id="test_result_{{ rand_test }}" class="ms-3"></span>
+                {% endset %}
+                {{ fields.htmlField('_test_connection', test_btn, row_label) }}
+                <script type="module" src="{{ script_url }}"></script>
+            {% endif %}
+
+            {# Whether to append a comment line on import #}
+            {{ fields.sliderField(
+                'comment_adding',
+                item.fields['comment_adding'],
+                __('Add a comment line', 'manufacturersimports')
+            ) }}
+
+        </div>
+    </div>
+
+    {{ include('components/form/buttons.html.twig') }}
+
+</div>
+
+{# Back link — outside the form #}
+<div class="text-center mt-3">
+    <a class="btn btn-secondary" href="{{ action_url }}">{{ __('Back') }}</a>
+</div>

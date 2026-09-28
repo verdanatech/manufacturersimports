@@ -1,0 +1,353 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR $copyright
+# This file is distributed under the same license as the $soft package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+# Translators:
+# Xavier CAILLAUD <thetsmr@gmail.com>, 2020
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: $soft $version\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-28 10:40+0000\n"
+"PO-Revision-Date: 2020-11-02 16:09+0000\n"
+"Last-Translator: Xavier CAILLAUD <thetsmr@gmail.com>, 2020\n"
+"Language-Team: Czech (Czech Republic) (https://www.transifex.com/infotelGLPI/"
+"teams/12364/cs_CZ/)\n"
+"Language: cs_CZ\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n == 1 && n % 1 == 0) ? 0 : (n >= 2 && n "
+"<= 4 && n % 1 == 0) ? 1: (n % 1 != 0 ) ? 2 : 3;\n"
+
+#: src/Config.php:563
+msgid "API connection test"
+msgstr ""
+
+#: templates/config_form.html.twig:79
+msgid "Access token API address"
+msgstr "Adresa tokenu pro přístup k aplikačnímu programovému rozhraní (API)"
+
+#: templates/pre_import_list.html.twig:75
+msgid "Actions"
+msgstr ""
+
+#: src/Config.php:495 templates/config_form.html.twig:165
+msgid "Add a comment line"
+msgstr "Přidat řádek s komentářem"
+
+#: src/PreImport.php:609
+msgid "Already imported"
+msgstr "Už naimportováno"
+
+#: front/config.form.php:143
+msgid "Authentication successful (token received)"
+msgstr ""
+
+#: src/Config.php:478 templates/config_form.html.twig:133
+msgid "Auto add of document"
+msgstr "Automaticky přidat dokument"
+
+#: src/Manufacturers/Manufacturer.php:116
+msgid "Automatic"
+msgstr ""
+
+#: templates/config_form.html.twig:177
+#: templates/massive_import_progress.html.twig:42
+msgid "Back"
+msgstr ""
+
+#: templates/pre_import_list.html.twig:68
+msgid "Check all"
+msgstr ""
+
+#: templates/search_form.html.twig:33
+msgid "Choose inventory type and manufacturer"
+msgstr "Vyberte typ inventáře a výrobce"
+
+#: templates/config_form.html.twig:113 templates/config_form.html.twig:126
+msgid "Client id"
+msgstr "Identifikátor klienta"
+
+#: templates/config_form.html.twig:119
+msgid "Client secret"
+msgstr "Heslo klienta"
+
+#: front/config.form.php:137 front/config.form.php:182
+msgid "Connection failed/data download from manufacturer web site"
+msgstr ""
+"Spojení se nezdařilo / data se nepodařilo stáhnout z webových stránek výrobce"
+
+#: front/config.form.php:90 src/PostImport.php:88
+msgid "Curl PHP package not installed"
+msgstr "Není nainstalován balíček PHP Curl"
+
+#: src/Config.php:461 templates/config_form.html.twig:93
+msgid "Default supplier attached"
+msgstr "Výchozí dodavatel připojen"
+
+#: src/PostImport.php:352
+#, php-format
+msgid "Device %d skipped (access denied)"
+msgstr ""
+
+#: src/PreImport.php:292
+msgid "Devices already imported"
+msgstr "Už naimportovaná zařízení"
+
+#: src/PreImport.php:291
+msgid "Devices not imported"
+msgstr "Dosud nenaimportovaná zařízení"
+
+#: src/PreImport.php:293
+msgid "Devices with import error"
+msgstr ""
+
+#: templates/pre_import_list.html.twig:78
+msgid "Import"
+msgstr ""
+
+#: src/Import.php:175 src/PostImport.php:371
+msgid "Import OK"
+msgstr "Import proběhl úspěšně"
+
+#: src/Import.php:178 src/PostImport.php:376
+msgid "Import failed"
+msgstr "Import se nezdařil"
+
+#: templates/massive_import_progress.html.twig:34
+msgid "Import in progress"
+msgstr "Probíhá import"
+
+#: src/PostImport.php:896 src/PostImport.php:903
+msgid "Imported from"
+msgstr ""
+
+#: src/PostImport.php:343
+#, php-format
+msgid "Importing device %1$d of %2$d"
+msgstr ""
+
+#: templates/massive_import_progress.html.twig:32
+#, php-format
+msgid "Importing from %s"
+msgstr ""
+
+#: front/config.form.php:86 src/PostImport.php:110
+msgid "Invalid or forbidden URL"
+msgstr ""
+
+#: templates/warranty_infocom.html.twig:35
+msgid "Link"
+msgid_plural "Links"
+msgstr[0] ""
+msgstr[1] ""
+msgstr[2] ""
+msgstr[3] ""
+
+#: templates/config_form.html.twig:64
+msgid "Manufacturer"
+msgstr ""
+
+#: src/PreImport.php:594 templates/warranty_infocom.html.twig:37
+msgid "Manufacturer information"
+msgstr "Informace výrobce"
+
+#: src/Config.php:452 templates/config_form.html.twig:71
+msgid "Manufacturer web address"
+msgstr "Webová adresa výrobce"
+
+#: src/PreImport.php:396
+msgid "Model Number"
+msgstr "Číslo modelu"
+
+#: src/Manufacturers/Lenovo.php:57
+msgid "Model number"
+msgstr "Číslo modelu"
+
+#: templates/config_form.html.twig:56
+msgid "Name"
+msgstr ""
+
+#: templates/config_form.html.twig:101
+msgid "New warranty affected by default (Replace if 0)"
+msgstr "Nová záruka přiřazena ve výchozím nastavení (nahradit pokud 0)"
+
+#: src/PreImport.php:399 src/Config.php:469
+msgid "New warranty attached"
+msgstr "Nová záruka připojena"
+
+#: front/config.form.php:145
+msgid "No access token in response"
+msgstr ""
+
+#: templates/pre_import_list.html.twig:30
+msgid "No device finded"
+msgstr "Nenalezeno žádné zařízení"
+
+#: templates/search_form.html.twig:60 templates/search_form.html.twig:64
+msgid "No manufacturer available. Please configure at least one manufacturer"
+msgstr "Není k dispozici žádný výrobce. Nastavte alespoň jednoho"
+
+#: front/massiveaction.php:106
+msgid "No selected element or badly defined operation"
+msgstr ""
+
+#: src/PreImport.php:598
+msgid "Not yet imported"
+msgstr "Dosud nenaimportováno"
+
+#: front/massiveaction.php:96
+msgid "Operation successful"
+msgstr ""
+
+#: front/config.php:42
+msgid "Please activate the plugin"
+msgstr "Zapněte zásuvný modul"
+
+#: templates/search_form.html.twig:54
+#: templates/massive_action_transfer.html.twig:31
+#: templates/pre_import_list.html.twig:88
+msgctxt "button"
+msgid "Post"
+msgstr ""
+
+#: templates/config_form.html.twig:37
+msgid "Preconfiguration"
+msgstr ""
+
+#: src/PreImport.php:601
+msgid "Problem during the importation"
+msgstr "Problém při importu"
+
+#: templates/pre_import_list.html.twig:80
+msgid "Reset the import"
+msgstr "Spustit import znovu"
+
+#: src/Config.php:959 templates/retrieve_warranty_alert.html.twig:36
+#: templates/retrieve_warranty_alert.html.twig:38
+msgctxt "button"
+msgid "Retrieve warranty from manufacturer"
+msgstr ""
+
+#: templates/profile.html.twig:34
+msgctxt "button"
+msgid "Save"
+msgstr ""
+
+#: templates/config_form.html.twig:139
+msgid "Section for document records"
+msgstr "Sekce pro ukládání dokumentů"
+
+#: templates/pre_import_list.html.twig:94
+msgid "Selection too large, massive action disabled."
+msgstr ""
+
+#: front/config.form.php:184
+#, php-format
+msgid "Server reachable (HTTP %d)"
+msgstr ""
+
+#: src/PreImport.php:398
+msgid "Supplier attached"
+msgstr "Dodavatel připojen"
+
+#: front/massiveaction.php:44 setup.php:90 src/PreImport.php:65
+#: src/Profile.php:126 src/Menu.php:52
+msgid "Suppliers import"
+msgid_plural "Suppliers imports"
+msgstr[0] "Import od dodavatelů"
+msgstr[1] "Importy od dodavatelů"
+msgstr[2] "Importů od dodavatelů"
+msgstr[3] "Importy od dodavatelů"
+
+#: src/Config.php:559
+msgid "Test connection"
+msgstr ""
+
+#: src/Config.php:560
+msgid "Test warranty page"
+msgstr ""
+
+#: src/PreImport.php:557
+msgid "The choosen supplier is not recursive"
+msgstr "Výběr dodavatele není rekurzivní"
+
+#: front/config.form.php:81
+msgid "Token URL is empty"
+msgstr ""
+
+#: src/PostImport.php:385
+#, php-format
+msgid "Total number of devices imported %s"
+msgstr "Celkový počet naimportovaných zařízení %s"
+
+#: templates/pre_import_list.html.twig:60
+#, php-format
+msgid "Total number of devices to import %s"
+msgstr "Celkový počet zařízení k importu %s"
+
+#: templates/pre_import_list.html.twig:71
+msgid "Uncheck all"
+msgstr ""
+
+#: templates/config_form.html.twig:43
+msgctxt "button"
+msgid "Update"
+msgstr ""
+
+#: templates/config_form.html.twig:84
+msgid "Warranty API address"
+msgstr ""
+"Adresa tokenu pro přístup k aplikačnímu programovému rozhraní (API) pro "
+"zjišťování záruk"
+
+#: src/Import.php:49
+msgid "Warranty import (Dell, HP)"
+msgstr ""
+
+#: src/Config.php:564
+msgid "Warranty page test"
+msgstr ""
+
+#: src/PostImport.php:897 src/PostImport.php:904
+msgid "With the manufacturersimports plugin"
+msgstr "Se zásuvným modulem import od výrobců"
+
+#: templates/retrieve_warranty_alert.html.twig:30
+msgid ""
+"You did not import the warranty for this item. Do you want to get it back?"
+msgstr ""
+
+#~ msgid "Add new material brand number"
+#~ msgstr "Přidat nové číslo výrobce materiálu"
+
+#~ msgid "Incompatible PHP Installation. Requires module"
+#~ msgstr "Nekompatibilní instalace PHP. Vyžaduje modul"
+
+#~ msgid "Manufacturer API key"
+#~ msgstr "Klíč k API výrobce"
+
+#~ msgid "Manufacturer API Secret"
+#~ msgstr "Heslo k aplikačnímu program. rozhraní poskytovaném výrobcem"
+
+#~ msgid "Data recovery DELL for computer"
+#~ msgstr "Obnovení dat pro počítače DELL"
+
+#~ msgid "Launching of imports"
+#~ msgstr "Spouštění importů"
+
+#~ msgid "Post import"
+#~ msgstr "Po importu"
+
+#~ msgid "Result"
+#~ msgstr "Výsledek"
+
+#~ msgid "Details"
+#~ msgstr "Podrobnosti"
+
+#~ msgid "Imported from web site"
+#~ msgstr "Naimportováno z webových stránek"

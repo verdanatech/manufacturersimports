@@ -1,0 +1,124 @@
+<?php
+
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
+ */
+
+namespace GlpiPlugin\Manufacturersimports\Manufacturers;
+
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\PostImport;
+use Search;
+
+/**
+ * Class Toshiba
+ */
+class Toshiba extends Manufacturer
+{
+    /**
+     * @see Manufacturer::showDocTitle()
+     */
+    public function showDocTitle($output_type, $header_num)
+    {
+        return Search::showHeaderItem($output_type, __('File'), $header_num);
+    }
+
+    public function getSearchField()
+    {
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::getSupplierInfo()
+     */
+    public function getSupplierInfo(
+        $compSerial = null,
+        $otherSerial = null,
+        $key = null,
+        $apisecret = null,
+        $supplierUrl = null
+    ) {
+        $info["name"]         = Config::TOSHIBA;
+        $info["supplier_url"] = "https://support.dynabook.com/support/warrantyResults?";
+        $info["url"]          = $supplierUrl .
+                                "sno=" . rawurlencode((string) $compSerial);
+        return $info;
+    }
+
+    /**
+     * Summary of getWarrantyUrl
+     *
+     * @param  $config
+     * @param  $compSerial
+     *
+     * @return string[]
+     */
+    public static function getWarrantyUrl($config, $compSerial)
+    {
+        return ["url" => "https://support.dynabook.com/support/warrantyResults?sno=" . rawurlencode((string) $compSerial)];
+    }
+
+    /**
+     * @see Manufacturer::getBuyDate()
+     */
+    public function getBuyDate($contents)
+    {
+        $field  = "shipDate";
+        $search = stristr($contents, $field);
+        $myDate = substr($search, 11, 21);
+        $myDate = trim($myDate);
+        $myDate = PostImport::checkDate($myDate);
+
+        return $myDate;
+    }
+
+    /**
+     * @see Manufacturer::getStartDate()
+     */
+    public function getStartDate($contents)
+    {
+        $field  = "customerPurchaseDate";
+        $search = stristr($contents, $field);
+        $myDate = substr($search, 23, 21);
+        $myDate = trim($myDate);
+        $myDate = PostImport::checkDate($myDate);
+
+        return $myDate;
+    }
+
+    /**
+     * @see Manufacturer::getExpirationDate()
+     */
+    public function getExpirationDate($contents)
+    {
+        $field     = "warrantyExpiryDate";
+        $search    = stristr($contents, $field);
+        $myEndDate = substr($search, 21, 21);
+        $myEndDate = trim($myEndDate);
+        $myEndDate = PostImport::checkDate($myEndDate);
+        return $myEndDate;
+    }
+}

@@ -1,0 +1,260 @@
+<?php
+
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
+ */
+
+namespace GlpiPlugin\Manufacturersimports\Manufacturers;
+
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\PostImport;
+use Html;
+use Search;
+
+/**
+ * Class Dell
+ */
+class Dell extends Manufacturer
+{
+    /**
+     * @see Manufacturer::showCheckbox()
+     */
+    public function showCheckbox($ID, $sel, $otherSerial = false)
+    {
+        $name = "item[" . $ID . "]";
+        return Html::getCheckbox(["name" => $name, "value" => 1, "selected" => $sel]);
+    }
+
+    /**
+     * @see Manufacturer::showItem()
+     */
+    public function showItem($output_type, $item_num, $row_num, $otherSerial = false)
+    {
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::showItemTitle()
+     */
+    public function showItemTitle($output_type, $header_num)
+    {
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::showDocTitle()
+     */
+    public function showDocTitle($output_type, $header_num)
+    {
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::showDocItem()
+     */
+    public function showDocItem($output_type, $item_num, $row_num, $doc = null)
+    {
+        return Search::showEndLine($output_type);
+    }
+
+    /**
+     * @see Manufacturer::getSupplierInfo()
+     */
+    public function getSupplierInfo(
+        $compSerial = null,
+        $otherSerial = null,
+        $key = null,
+        $apisecret = null,
+        $supplierUrl = null
+    ) {
+        if (!$compSerial) {
+            // by default
+            $info["name"]            = Config::DELL;
+            $info['supplier_url']    = "https://www.dell.com/support/home/product-support/servicetag/";
+            $info['token_url']       = "https://apigtwb2c.us.dell.com/auth/oauth/v2/token";
+            $info['warranty_url']    = "https://apigtwb2c.us.dell.com/PROD/sbil/eapi/v5/asset-entitlements?servicetags=";
+            $info["supplier_key"]    = "123456789";
+            $info["supplier_secret"] = "987654321";
+            return $info;
+        }
+
+        $info["url"] = $supplierUrl . rawurlencode($compSerial);
+        return $info;
+    }
+
+    /**
+     * @return bool
+     */
+    public function getSearchField()
+    {
+        return false;
+    }
+
+    public function getTestUrlField(): string
+    {
+        return 'token_url';
+    }
+
+    /**
+     * @see Manufacturer::getBuyDate()
+     */
+    public function getBuyDate($contents)
+    {
+        $info = json_decode($contents, true);
+        // v5
+        if (isset($info[0]['shipDate'])) {
+            $date = new \DateTime($info[0]['shipDate']);
+            return $date->format('c');
+        }
+
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::getStartDate()
+     */
+    public function getStartDate($contents)
+    {
+        $info = json_decode($contents, true);
+        // v5
+        $max_date = false;
+        if (isset($info[0]['entitlements'])) {
+            foreach ($info[0]['entitlements'] as $d) {
+                if ($d['startDate']) {
+                    $date = new \DateTime($d['startDate']);
+                    if ($max_date == false || $date < $max_date) {
+                        $max_date = $date;
+                    }
+                }
+            }
+
+            if ($max_date) {
+                return $max_date->format('c');
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::getExpirationDate()
+     */
+    public function getExpirationDate($contents)
+    {
+        $info = json_decode($contents, true);
+        // v5
+        // when several dates are available, will take the last one
+        $max_date = false;
+        if (isset($info[0]['entitlements'])) {
+            foreach ($info[0]['entitlements'] as $d) {
+                if ($d['endDate']) {
+                    $date = new \DateTime($d['endDate']);
+                    if ($max_date == false || $date > $max_date) {
+                        $max_date = $date;
+                    }
+                }
+            }
+
+            if ($max_date) {
+                return $max_date->format('c');
+            }
+        }
+
+
+        return false;
+    }
+
+    /**
+     * @see Manufacturer::getWarrantyInfo()
+     */
+    public function getWarrantyInfo($contents)
+    {
+        $info = json_decode($contents, true);
+
+        // v5
+        // when several warranties are available, will take the last one
+        $max_date = false;
+        $i        = false;
+        if (isset($info[0]['entitlements'])) {
+            foreach ($info[0]['entitlements'] as $k => $d) {
+                if ($d['endDate']) {
+                    $date = new \DateTime($d['endDate']);
+                    if ($max_date == false || $date > $max_date) {
+                        $max_date = $date;
+                        $i = $k;
+                    }
+                }
+            }
+        }
+
+        if ($i !== false) {
+            return $info[0]['entitlements'][$i]['serviceLevelDescription'];
+        }
+
+        return false;
+    }
+
+    /**
+     * Summary of getToken
+     *
+     * @param  $config
+     *
+     * @return mixed
+     */
+    public static function getToken($config)
+    {
+        $token = false;
+        // must manage token
+        $options  = ["url"          => $config->fields["token_url"],
+            "download"     => false,
+            "file"         => false,
+            "post"         => ['client_id'     => Config::decryptSecret($config->fields["supplier_key"]),
+                'client_secret' => Config::decryptSecret($config->fields["supplier_secret"]),
+                'grant_type'    => 'client_credentials'],
+            "suppliername" => $config->fields["name"]];
+        $contents = PostImport::cURLData($options);
+        // must extract from $contents the token bearer
+        $response = json_decode($contents, true);
+        if (isset($response['access_token'])) {
+            $token = $response['access_token'];
+        }
+        return $token;
+    }
+
+
+    /**
+     * Summary of getWarrantyUrl
+     *
+     * @param  $config
+     * @param  $compSerial
+     *
+     * @return string[]
+     */
+    public static function getWarrantyUrl($config, $compSerial)
+    {
+        return ["url" => $config->fields['warranty_url'] . rawurlencode((string) $compSerial)];
+    }
+}
