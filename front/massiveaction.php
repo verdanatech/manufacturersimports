@@ -1,0 +1,110 @@
+<?php
+
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
+ */
+
+use Glpi\Application\View\TemplateRenderer;
+use Glpi\Exception\Http\AccessDeniedHttpException;
+use GlpiPlugin\Manufacturersimports\Log;
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Menu;
+use GlpiPlugin\Manufacturersimports\PostImport;
+
+header("Content-Type: text/html; charset=UTF-8");
+Html::header_nocache();
+
+$log = new Log();
+$config = new Config();
+
+Html::header(
+    _n('Suppliers import', 'Suppliers imports', 2, 'manufacturersimports'),
+    '',
+    "tools",
+    Menu::class,
+);
+
+$config->checkGlobal(UPDATE);
+
+if (isset($_POST["action"])
+    && isset($_POST["id"])
+    && isset($_POST["item"])
+    // is_array() first: count() on a scalar is a TypeError (500) on PHP 8,
+    // as massiveimport_run.php already guards against.
+    && is_array($_POST["item"])
+    && count($_POST["item"])) {
+    switch ($_POST["action"]) {
+        case "import":
+            $itemtype = $_POST["itemtype"];
+            // Only the itemtypes this plugin handles are acceptable here.
+            if (!in_array($itemtype, Config::getTypes(true), true)) {
+                throw new AccessDeniedHttpException();
+            }
+            foreach ($_POST["item"] as $key => $val) {
+                if ($val == 1) {
+                    $item = getItemForItemtype($itemtype);
+                    // Enforce the entity perimeter on each targeted item before
+                    // rendering the progress page (the worker re-checks too).
+                    if (!$item || !$item->can((int) $key, UPDATE)) {
+                        throw new AccessDeniedHttpException();
+                    }
+                }
+            }
+            PostImport::massiveimport($_POST);
+            break;
+
+        case "reinit_once":
+            $itemtype = $_POST["itemtype"];
+            // Only the itemtypes this plugin handles are acceptable here.
+            if (!in_array($itemtype, Config::getTypes(true), true)) {
+                throw new AccessDeniedHttpException();
+            }
+            foreach ($_POST["item"] as $key => $val) {
+                if ($val == 1) {
+                    $item = getItemForItemtype($itemtype);
+                    // Enforce the entity perimeter on each targeted item: the
+                    // global plugin right does not prove access to THIS item.
+                    if (!$item || !$item->can((int) $key, UPDATE)) {
+                        throw new AccessDeniedHttpException();
+                    }
+                    $log->reinitializeImport($itemtype, $key);
+                }
+            }
+            Session::addMessageAfterRedirect(__('Operation successful', 'manufacturersimports'));
+            Html::redirect(PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . "/front/import.php?itemtype=" .
+                urlencode($_POST["itemtype"]) .
+                "&manufacturers_id=" . (int) $_POST["manufacturers_id"] .
+                "&start=" . (int) $_POST["start"] .
+                "&imported=" . (int) $_POST["imported"]);
+            break;
+    }
+} else {
+    TemplateRenderer::getInstance()->display('@manufacturersimports/plugin_inactive.html.twig', [
+        'message' => __('No selected element or badly defined operation', 'manufacturersimports'),
+    ]);
+}
+
+Html::footer();
