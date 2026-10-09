@@ -1,0 +1,111 @@
+<?php
+
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
+ */
+
+define('PLUGIN_MANUFACTURERSIMPORTS_VERSION', '3.1.14');
+
+global $CFG_GLPI;
+
+use Glpi\Plugin\Hooks;
+use GlpiPlugin\Manufacturersimports\Profile;
+use GlpiPlugin\Manufacturersimports\Config;
+use GlpiPlugin\Manufacturersimports\Menu;
+
+if (!defined("PLUGIN_MANUFACTURERSIMPORTS_DIR")) {
+    define("PLUGIN_MANUFACTURERSIMPORTS_DIR", Plugin::getPhpDir("manufacturersimports"));
+    $root = $CFG_GLPI['root_doc'] . '/plugins/manufacturersimports';
+    define("PLUGIN_MANUFACTURERSIMPORTS_WEBDIR", $root);
+}
+
+// Init the hooks of the plugins -Needed
+function plugin_init_manufacturersimports()
+{
+    global $PLUGIN_HOOKS, $CFG_GLPI;
+
+    if (Plugin::isPluginActive('manufacturersimports')
+        && Session::getLoginUserID()) {
+
+        Plugin::registerClass(
+            Profile::class,
+            ['addtabon' => 'Profile'],
+        );
+
+        //Display menu entry only if user has right to see it !
+        if (Session::haveRight('plugin_manufacturersimports', READ)) {
+            $PLUGIN_HOOKS[Hooks::MENU_TOADD]['manufacturersimports']
+               = ['tools' => Menu::class];
+        }
+
+        if (Session::haveRight('config', UPDATE)) {
+            $PLUGIN_HOOKS[Hooks::CONFIG_PAGE]['manufacturersimports'] = 'front/config.php';
+            $PLUGIN_HOOKS[Hooks::USE_MASSIVE_ACTION]['manufacturersimports'] = 1;
+        }
+
+        // End init, when all types are registered
+        $PLUGIN_HOOKS[Hooks::POST_INIT]['manufacturersimports']
+           = 'plugin_manufacturersimports_postinit';
+
+        $PLUGIN_HOOKS[Hooks::INFOCOM]['manufacturersimports']       = [Config::class, 'showForInfocom'];
+        $PLUGIN_HOOKS[Hooks::PRE_SHOW_ITEM]['manufacturersimports'] = [Config::class, 'showItemImport'];
+    }
+
+    if (isset($_SESSION['glpiactiveprofile']['interface'])
+        && $_SESSION['glpiactiveprofile']['interface'] == 'central') {
+        // Add specific files to add to the header : javascript or css
+        $PLUGIN_HOOKS[Hooks::ADD_CSS]['manufacturersimports'] = [
+            "manufacturersimports.css",
+        ];
+    }
+}
+
+// Get the name and the version of the plugin - Needed
+function plugin_version_manufacturersimports()
+{
+    return ['name'         => _n(
+        'Suppliers import',
+        'Suppliers imports',
+        2,
+        'manufacturersimports',
+    ),
+        'oldname'      => 'suppliertag',
+        'version'      => PLUGIN_MANUFACTURERSIMPORTS_VERSION,
+        'license'      => 'GPLv3+',
+        'author'       => "<a href='https://blogglpi.infotel.com'>Infotel</a>, Xavier CAILLAUD",
+        'homepage'     => 'https://github.com/InfotelGLPI/manufacturersimports/',
+        'requirements' => [
+            'glpi' => [
+                'min' => '11.0',
+                'max' => '12.0',
+                'dev' => false,
+            ],
+            'php'  => [
+                'exts' => ['soap', 'curl', 'json'],
+            ],
+        ],
+    ];
+}

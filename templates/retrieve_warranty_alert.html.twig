@@ -1,0 +1,41 @@
+{#
+ # -------------------------------------------------------------------------
+ # manufacturersimports plugin for GLPI
+ # Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ #
+ # https://github.com/InfotelGLPI/manufacturersimports
+ # -------------------------------------------------------------------------
+ #
+ # LICENSE
+ #
+ # This file is part of manufacturersimports.
+ #
+ # manufacturersimports is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 3 of the License, or
+ # (at your option) any later version.
+ #
+ # manufacturersimports is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License
+ # along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ # --------------------------------------------------------------------------
+ #}
+
+{# Rendered by the PRE_SHOW_ITEM hook, before (and outside of) the item form #}
+<div class="alert alert-warning d-flex align-items-center gap-2">
+    <span>{{ __('You did not import the warranty for this item. Do you want to get it back?', 'manufacturersimports') }}</span>
+    <form method="post" action="{{ target }}" class="d-inline">
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="itemtype" value="{{ itemtype }}">
+        <input type="hidden" name="items_id" value="{{ items_id }}">
+        <button type="submit" name="retrieve_warranty" value="1" class="btn btn-sm btn-ghost-secondary"
+                title="{{ _x('button', 'Retrieve warranty from manufacturer', 'manufacturersimports') }}">
+            <i class="ti ti-cloud-download"></i>
+            <span class="visually-hidden">{{ _x('button', 'Retrieve warranty from manufacturer', 'manufacturersimports') }}</span>
+        </button>
+    </form>
+</div>

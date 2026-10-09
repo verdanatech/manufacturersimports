@@ -1,0 +1,1006 @@
+<?php
+
+/**
+ * -------------------------------------------------------------------------
+ * manufacturersimports plugin for GLPI
+ * Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ *
+ * https://github.com/InfotelGLPI/manufacturersimports
+ * -------------------------------------------------------------------------
+ *
+ * LICENSE
+ *
+ * This file is part of manufacturersimports.
+ *
+ * manufacturersimports is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * manufacturersimports is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ * --------------------------------------------------------------------------
+ */
+
+namespace GlpiPlugin\Manufacturersimports;
+
+use CommonDBTM;
+use DbUtils;
+use Glpi\Application\View\TemplateRenderer;
+use Glpi\DBAL\QueryExpression;
+use Glpi\Exception\Http\AccessDeniedHttpException;
+use Glpi\Message\MessageType;
+use Glpi\Progress\StoredProgressIndicator;
+use GLPIKey;
+use GlpiPlugin\Manufacturersimports\Manufacturers\HP;
+use Html;
+use Infocom;
+use Document;
+use Document_Item;
+use Session;
+use Supplier;
+use Toolbox;
+
+/**
+ * Class PostImport
+ */
+class PostImport extends CommonDBTM
+{
+    /**
+     * @param      $field
+     * @param bool $reverse
+     *
+     * @return string
+     */
+    public static function checkDate($field, $reverse = false)
+    {
+        // Date is already "reformat" according to getDateFormat()
+
+        if ($reverse) {
+            $pattern = "/^([0-9]{1,2})-([0-9]{1,2})-([0-9]{4})";
+            $pattern .= "([0-5][0-9]:[0-5]?[0-9]:[_][01][0-9]|2[0-3])?/";
+        } else {
+            $pattern = "/^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})";
+            $pattern .= "([_][01][0-9]|2[0-3]:[0-5][0-9]:[0-5]?[0-9])?/";
+        }
+        preg_match($pattern, $field, $regs);
+        if (empty($regs)) {
+            return "0000-00-00";
+        }
+        return $field;
+    }
+
+
+    /**
+     * @param $options
+     *
+     * @return mixed|string
+     */
+    public static function cURLData($options)
+    {
+        global $CFG_GLPI;
+
+        if (!function_exists('curl_init')) {
+            return __('Curl PHP package not installed', 'manufacturersimports') . "\n";
+        }
+        $data        = '';
+        $timeout     = 30;
+        $proxy_host  = !empty($CFG_GLPI["proxy_name"]) ? ($CFG_GLPI["proxy_name"] . ":" . $CFG_GLPI["proxy_port"]) : false; // host:port
+        $proxy_ident = !empty($CFG_GLPI["proxy_user"]) ? ($CFG_GLPI["proxy_user"] . ":"
+                                                          . (new GLPIKey())->decrypt($CFG_GLPI["proxy_passwd"])) : false; // username:password
+
+        $url = $options["url"];
+        $sn = null;
+        if (isset($options["sn"])) {
+            $sn = $options["sn"];
+        }
+        $pn = null;
+        if (isset($options["pn"])) {
+            $pn = $options["pn"];
+        }
+
+        // Align the production path with the test endpoints: reject unsafe URLs
+        // (non-https or hosts resolving to private/reserved IPs) before reaching
+        // out server-side (SSRF).
+        if (!Config::isSafeApiUrl($url)) {
+            return __('Invalid or forbidden URL', 'manufacturersimports') . "\n";
+        }
+        // Pin the validated IP so curl cannot re-resolve the host to an internal
+        // target (DNS-rebinding TOCTOU); empty when a proxy is configured.
+        $pinned_resolve = Config::getPinnedResolve($url);
+
+        $ch = curl_init();
+        // Never dump curl's verbose output (which carries Authorization/Basic
+        // credential headers) to a file inside the plugin webroot. Diagnostic
+        // details are logged below via Toolbox::logInfo() without auth headers.
+        curl_setopt($ch, CURLOPT_FRESH_CONNECT, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout);
+
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_HEADER, 0);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, "Mozilla/4.0 (compatible; MSIE 5.01; Windows NT 5.0)");
+        // Do not follow redirects: a public host could otherwise bounce us to an
+        // internal target, bypassing the URL validation above (SSRF).
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+        if (!empty($pinned_resolve)) {
+            curl_setopt($ch, CURLOPT_RESOLVE, $pinned_resolve);
+        }
+        curl_setopt($ch, CURLOPT_COOKIESESSION, true);
+        // Per-request cookie jar under the GLPI temp dir (absolute, unique),
+        // never a relative path in the webroot shared across suppliers.
+        $cookiefile = tempnam(GLPI_TMP_DIR, 'mfi_cookie_');
+        if ($cookiefile !== false) {
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookiefile);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookiefile);
+        }
+
+        if (!empty($options['token'])) {
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                "Authorization: Bearer " . $options['token'],
+            ]);
+        }
+
+        if (!empty($options['ClientID'])) {
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                "ClientID: " . $options['ClientID'],
+            ]);
+        }
+
+        //Do we have post field to send?
+        if (!empty($options["post"])
+            && (empty($options['token']) && ($options['suppliername'] == Config::HP
+                    || $options['suppliername'] == Config::DELL))) {
+
+            //curl_setopt($ch, CURLOPT_POST,true);
+            // Encoded: a secret may contain "&" or "="
+            $post = is_array($options['post'])
+                ? http_build_query($options['post'])
+                : (string) $options['post'];
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ["Content-Type:application/x-www-form-urlencoded"]);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTREDIR, 2);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
+
+            // ADDED FOR HP
+            if ($options['suppliername'] == Config::HP
+            || $options['suppliername'] == Config::DELL) {
+                if (empty($options['token'])) {
+                    $client_id = $options['post']['client_id'];
+                    $client_secret = $options['post']['client_secret'];
+                    curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+                    curl_setopt($ch, CURLOPT_USERPWD, "$client_id:$client_secret");
+                }
+            }
+        }
+
+        if ($options['suppliername'] == Config::HP) {
+            // Polling an asynchronous HP job is a plain GET with the bearer token set above
+            if (!empty($options['token']) && empty($options['http_get'])) {
+
+                $authorization = "Authorization: Bearer " . $options['token']; // Prepare the authorisation token
+                curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json', $authorization ]);
+                curl_setopt($ch, CURLOPT_POST, true);
+                $table_serial["sn"] = $sn;
+                $table_serial["pn"] = $pn;
+                $postdata = "[" . json_encode($table_serial) . "]";
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $postdata);
+                curl_setopt($ch, CURLOPT_POSTREDIR, 2);
+            }
+        }
+
+        if (!$options["download"]) {
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        }
+
+        // Route the request through a proxy server when one is configured.
+        if (!empty($CFG_GLPI["proxy_name"])) {
+            // Set the proxy address.
+            curl_setopt($ch, CURLOPT_PROXY, $proxy_host);
+
+            // Set the credentials when the proxy requires authentication.
+            if ($proxy_ident) {
+                curl_setopt($ch, CURLOPT_PROXYUSERPWD, $proxy_ident);
+            }
+        }
+
+        if ($options["download"]) {
+            $fp = fopen($options["file"], "w");
+            curl_setopt($ch, CURLOPT_FILE, $fp);
+            curl_exec($ch);
+        } else {
+            $data = curl_exec($ch);
+        }
+
+        // Lenovo exception (github issue #168): the warranty payload is only
+        // served after an HTTP redirect to a region-scoped URL on the SAME host
+        // (e.g. adding /xx/en/ to the path). CURLOPT_FOLLOWLOCATION stays off
+        // globally for SSRF safety, so we follow Lenovo's redirect(s) manually
+        // here and re-apply the entry guard on every hop: refuse any target that
+        // leaves the validated origin host or no longer resolves to a public IP,
+        // and re-pin the resolved IP so curl cannot be bounced to an internal
+        // target between hops.
+        if (!$options["download"]
+            && $options['suppliername'] == Config::LENOVO) {
+            $origin_host = parse_url($url, PHP_URL_HOST);
+            $max_hops    = 5;
+            while ($max_hops-- > 0) {
+                $http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                if ($http_code < 300 || $http_code >= 400) {
+                    break; // not a redirect: $data already holds the final body
+                }
+                $next = (string) curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+                if ($next === ''
+                    || parse_url($next, PHP_URL_HOST) !== $origin_host
+                    || !Config::isSafeApiUrl($next)) {
+                    // Unresolvable, cross-host or internal target: abort rather
+                    // than follow it (behaves like the pre-fix failed fetch).
+                    $data = false;
+                    break;
+                }
+                curl_setopt($ch, CURLOPT_URL, $next);
+                $next_pin = Config::getPinnedResolve($next);
+                if (!empty($next_pin)) {
+                    curl_setopt($ch, CURLOPT_RESOLVE, $next_pin);
+                }
+                $data = curl_exec($ch);
+            }
+        }
+
+        // Debug mode: pinned addresses, IP reached, proxy and timings of the request
+        Config::logCurlDebug($ch, 'warranty request (' . $options['suppliername'] . ')', $pinned_resolve);
+        // The handle is released when it goes out of scope (curl_close() is a no-op since PHP 8.0)
+        unset($ch);
+
+        // Drop the per-request cookie jar so no supplier session cookie lingers.
+        if ($cookiefile !== false && file_exists($cookiefile)) {
+            @unlink($cookiefile);
+        }
+
+        if ($options["download"]) {
+            fclose($fp);
+        }
+        if (!$options["download"] && $data) {
+            return $data;
+        }
+    }
+
+    /**
+     * @param $values
+     */
+    public static function massiveimport($values)
+    {
+        // The config id comes from the request: check the entity perimeter before
+        // the progress page is built on another entity's configuration.
+        $config = Config::getCheckedConfig($values['manufacturers_id']);
+        if ($config === null) {
+            throw new AccessDeniedHttpException();
+        }
+
+        $back_url  = PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/front/import.php?back=back'
+                     . '&itemtype=' . urlencode($values['itemtype'])
+                     . '&manufacturers_id=' . (int) $values['manufacturers_id']
+                     . '&start=' . (int) ($values['start'] ?? 0)
+                     . '&imported=' . (int) ($values['imported'] ?? 0);
+
+        $run_params = array_diff_key($values, ['_glpi_csrf_token' => '']);
+
+        TemplateRenderer::getInstance()->display('@manufacturersimports/massive_import_progress.html.twig', [
+            'suppliername' => $config->fields['name'] ?? '',
+            'run_url'      => PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/front/massiveimport_run.php',
+            'back_url'     => $back_url,
+            'run_params'   => $run_params,
+            'script_url'   => PLUGIN_MANUFACTURERSIMPORTS_WEBDIR . '/scripts/massive-import-progress.js',
+        ]);
+    }
+
+    /**
+     * Run the massive import in background and report progress.
+     */
+    public static function massiveimportWithProgress(array $values, StoredProgressIndicator $progress): void
+    {
+        $itemtype = $values['itemtype'] ?? '';
+        // Only the itemtypes handled by this plugin are acceptable before we
+        // derive any table/class from this user-supplied value.
+        if (!in_array($itemtype, Config::getTypes(true), true)) {
+            throw new AccessDeniedHttpException();
+        }
+        // Server-side replay of the pre-import screen guard: the import writes the
+        // infocoms of the items (warranty, supplier, purchase date).
+        if (!Infocom::canUpdate()) {
+            throw new AccessDeniedHttpException();
+        }
+
+        $log   = new Log();
+        $items = array_filter($values['item'] ?? [], fn($v) => $v == 1);
+        $total_items = count($items);
+
+        $progress->setMaxSteps(max(1, $total_items));
+
+        $total_imported = 0;
+        $step           = 0;
+
+        foreach ($items as $key => $val) {
+            $step++;
+            $progress->setCurrentStep($step);
+            $progress->setProgressBarMessage(
+                sprintf(__('Importing device %1$d of %2$d', 'manufacturersimports'), $step, $total_items),
+            );
+
+            $item = getItemForItemtype($itemtype);
+            // Enforce the entity perimeter on each targeted item: the global
+            // plugin right does not prove the caller may write to THIS item.
+            if (!$item || !$item->can((int) $key, UPDATE)) {
+                $progress->addMessage(
+                    MessageType::Error,
+                    sprintf(__('Device %d skipped (access denied)', 'manufacturersimports'), (int) $key),
+                );
+                continue;
+            }
+
+            $already_imported = $log->checkIfAlreadyImported($itemtype, $key);
+            if (!$already_imported) {
+                $result = self::seePostImportForProgress(
+                    $itemtype,
+                    $key,
+                    $values["to_suppliers_id$key"] ?? 0,
+                    $values["to_warranty_duration$key"] ?? 0,
+                    $values['manufacturers_id'],
+                );
+
+                if ($result['success']) {
+                    $total_imported++;
+                    $progress->addMessage(
+                        MessageType::Success,
+                        $result['name'] . ' — ' . __('Import OK', 'manufacturersimports'),
+                    );
+                } else {
+                    $progress->addMessage(
+                        MessageType::Error,
+                        $result['name'] . ' — ' . __('Import failed', 'manufacturersimports'),
+                    );
+                }
+            }
+        }
+
+        $progress->setCurrentStep($total_items);
+        $progress->addMessage(
+            MessageType::Notice,
+            sprintf(__('Total number of devices imported %s', 'manufacturersimports'), $total_imported),
+        );
+    }
+
+    /**
+     * Server-side replay of the supplier rule of the pre-import screen.
+     *
+     * The supplier id comes from the posted dropdown (to_suppliers_id<N>): it must
+     * exist, not be in the trash, be reachable by the user, and belong to the
+     * item's entity or be recursive from a parent entity of it.
+     *
+     * @return int the supplier id, or 0 when it cannot be assigned to this item
+     */
+    private static function checkSupplierForItem(int $suppliers_id, string $itemtype, int $items_id): int
+    {
+        if ($suppliers_id <= 0) {
+            return 0;
+        }
+
+        $supplier = new Supplier();
+        $item     = getItemForItemtype($itemtype);
+        if (!$item
+            || !$item->getFromDB($items_id)
+            || !$supplier->getFromDB($suppliers_id)
+            || $supplier->fields['is_deleted']
+            // No active entities in the cron session: only the entity rule below applies there
+            || (!Session::isCron() && !Session::haveAccessToEntity(
+                $supplier->fields['entities_id'],
+                (bool) $supplier->fields['is_recursive'],
+            ))) {
+            return 0;
+        }
+
+        $item_entity = (int) $item->fields['entities_id'];
+        if ($supplier->fields['is_recursive']) {
+            $dbu = new DbUtils();
+            return in_array($item_entity, $dbu->getSonsOf('glpi_entities', $supplier->fields['entities_id']))
+                ? $suppliers_id
+                : 0;
+        }
+
+        return (int) $supplier->fields['entities_id'] === $item_entity ? $suppliers_id : 0;
+    }
+
+    /**
+     * Run the import for a single device and return result data (no HTML output).
+     *
+     * @return array{name: string, serial: string, success: bool}
+     */
+    public static function seePostImportForProgress(
+        string $type,
+        int $ID,
+        int $fromsupplier,
+        int $fromwarranty,
+        int $configID
+    ): array {
+        global $DB;
+
+        // The itemtype reaches this method from the request: keep it inside the
+        // supported list before it is used as a table name and as a class in
+        // static calls below.
+        if (!in_array($type, Config::getTypes(true), true)) {
+            return ['name' => "#{$ID}", 'serial' => '', 'success' => false];
+        }
+
+        // The config id comes from the request: check the entity perimeter before
+        // its credentials are decrypted and used for the outbound call.
+        $config = Config::getCheckedConfig($configID);
+        if ($config === null) {
+            return ['name' => "#{$ID}", 'serial' => '', 'success' => false];
+        }
+        $manufacturerId = $config->fields['manufacturers_id'];
+        $suppliername   = $config->fields['name'];
+        $supplierUrl    = $config->fields['supplier_url'];
+        $supplierkey    = Config::decryptSecret($config->fields['supplier_key']);
+        $supplierSecret = Config::decryptSecret($config->fields['supplier_secret']);
+
+        $supplierId = self::checkSupplierForItem(
+            (int) ($fromsupplier ?: $config->fields['suppliers_id']),
+            $type,
+            $ID,
+        );
+
+        $dbu        = new DbUtils();
+        $itemtable  = $dbu->getTableForItemType($type);
+        $modelfield = $dbu->getForeignKeyFieldForTable($dbu->getTableForItemType($type . 'Model'));
+
+        $where = [
+            "$itemtable.is_deleted"  => 0,
+            "$itemtable.is_template" => 0,
+            'glpi_manufacturers.id'  => (int) $manufacturerId,
+            ["$itemtable.serial"     => ['!=', '']],
+            "$itemtable.id"          => (int) $ID,
+            // Defence in depth: never select an item outside the caller's
+            // entity perimeter, even if the can() gate upstream is bypassed.
+            $dbu->getEntitiesRestrictCriteria($itemtable),
+        ];
+        // Every custom asset definition shares glpi_assets_assets, so the id
+        // alone does not identify the type: pin the query to the definition
+        // $type belongs to. Classic itemtypes return an empty array, which must
+        // not be nested as a criterion (it would render as an invalid "AND ()").
+        $system_criteria = $type::getSystemSQLCriteria($itemtable);
+        if ($system_criteria !== []) {
+            $where[] = $system_criteria;
+        }
+
+        $iterator = $DB->request([
+            'SELECT'     => [
+                "$itemtable.id",
+                "$itemtable.name",
+                "$itemtable.entities_id",
+                "$itemtable.serial",
+                "$itemtable.$modelfield",
+            ],
+            'FROM'       => $itemtable,
+            'INNER JOIN' => [
+                'glpi_manufacturers' => [
+                    'ON' => ['glpi_manufacturers' => 'id', $itemtable => 'manufacturers_id'],
+                ],
+            ],
+            'WHERE'      => $where,
+            'ORDER'      => new QueryExpression("`$itemtable`.`name`"),
+        ]);
+
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return ['name' => "#{$ID}", 'serial' => '', 'success' => false];
+        }
+        $token = $supplierclass::getToken($config);
+
+        $result = ['name' => "#{$ID}", 'serial' => '', 'success' => false];
+
+        foreach ($iterator as $line) {
+            $dID = ($_SESSION['glpiis_ids_visible'] || empty($line['name']))
+                ? ' (' . $line['id'] . ')' : '';
+            $result['name']   = htmlescape($line['name']) . $dID;
+            $result['serial'] = $line['serial'];
+
+            $otherSerial = '';
+            $models_id   = $line[$modelfield];
+            if (class_exists($type . 'Model') && $models_id != 0) {
+                $modelitemtype = $type . 'Model';
+                $modelclass    = new $modelitemtype();
+                $modelclass->getFromDB($models_id);
+                $otherSerial = $modelclass->fields['product_number'] ?? '';
+            }
+
+            $url          = PreImport::selectSupplier($suppliername, $supplierUrl, $line['serial'], $otherSerial, $supplierkey, $supplierSecret);
+            $post         = PreImport::getSupplierPost($suppliername, $line['serial'], $otherSerial, $supplierkey, $supplierSecret);
+            $warranty_url = $supplierclass::getWarrantyUrl($config, $line['serial']);
+
+            $options = [
+                'url'          => $warranty_url['url'] ?? $url,
+                'sn'           => $line['serial'],
+                'pn'           => $otherSerial,
+                'post'         => $post,
+                'type'         => $type,
+                'ID'           => $line['id'],
+                'config'       => $config,
+                'line'         => $line,
+                'fromsupplier' => $supplierId,
+                'fromwarranty' => $fromwarranty,
+                'token'        => $token,
+            ];
+
+            if ($suppliername === Config::LENOVO) {
+                $options['ClientID'] = $supplierkey;
+            }
+
+            $result['success'] = (bool) self::saveImport($options);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Fonction to select the search field on the website of the supplier
+     *
+     * @param $suppliername the suppliername
+     *
+     * @return $field for date and warranty searching
+     *
+     */
+    public static function selectSupplierField($suppliername)
+    {
+        $field = '';
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass !== null) {
+            $supplier = new $supplierclass();
+            $field    = $supplier->getSearchField();
+        }
+
+        return $field;
+    }
+
+    /**
+     * @param $suppliername
+     * @param $contents
+     *
+     * @return mixed
+     */
+    public static function importDate($suppliername, $contents)
+    {
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
+        $supplier   = new $supplierclass();
+        $importDate = $supplier->getBuyDate($contents);
+
+        return $importDate;
+    }
+
+    /**
+     * @param $suppliername
+     * @param $contents
+     *
+     * @return mixed
+     */
+    public static function importStartDate($suppliername, $contents)
+    {
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
+        $supplier        = new $supplierclass();
+        $importStartDate = $supplier->getStartDate($contents);
+
+        return $importStartDate;
+    }
+
+    /**
+     * @param $suppliername
+     * @param $contents
+     *
+     * @return mixed
+     */
+    public static function importWarrantyInfo($suppliername, $contents)
+    {
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
+        $supplier           = new $supplierclass();
+        $importWarrantyInfo = $supplier->getWarrantyInfo($contents);
+
+        return $importWarrantyInfo;
+    }
+
+    //static function importWarranty($suppliername, $maDate, $contents, $warranty) {
+    //   if ($warranty==0) {
+    //      if ($suppliername == Config::DELL) {
+    //         $maDateFin = DellSoap::getDates($contents, "EndDate");
+    //      } else {
+    //         $supplierclass = "GlpiPlugin\Manufacturersimports\\".$suppliername;
+    //         $supplier      = new $supplierclass();
+    //         $maDateFin     = $supplier->getExpirationDate($contents);
+    //      }
+
+    //      if ($maDateFin != "0000-00-00") {
+    //         list ($adebut, $mdebut, $jdebut) = explode ('-', $maDate);
+    //         list ($afin, $mfin, $jfin)       = explode ('-', $maDateFin);
+
+    //         $warranty = 0;
+    //         $warranty = 12 - $mdebut;
+    //         for ($year = $adebut + 1; $year < $afin;$year++) {
+    //            $warranty += 12;
+    //         }
+    //         $warranty += $mfin;
+    //      }
+    //   }
+    //   return $warranty;
+    //}
+
+    /**
+     * @param $suppliername
+     * @param $contents
+     *
+     * @return mixed
+     */
+    public static function importDateFin($suppliername, $contents)
+    {
+        // Resolve against the whitelist: the name is config data, never trust it in `new`.
+        $supplierclass = Config::resolveSupplierClass($suppliername);
+        if ($supplierclass === null) {
+            return false;
+        }
+        $supplier  = new $supplierclass();
+        $maDateFin = $supplier->getExpirationDate($contents);
+
+        return $maDateFin;
+    }
+
+    /**
+     * @param array $params
+     *
+     * @return bool
+     */
+    public static function saveImport($params = [])
+    {
+        $default_values                 = [];
+        $default_values['url']          = "";
+        $default_values['sn']           = "";
+        $default_values['pn']           = "";
+        $default_values['url_warranty'] = "";
+        $default_values['post']         = "";
+        $default_values['type']         = "";
+        $default_values['ID']           = 0;
+        $default_values['fromsupplier'] = 0;
+        $default_values['fromwarranty'] = 0;
+        $default_values['line']         = [];
+        $default_values['config']       = new Config();
+        $default_values['token']        = false;
+
+        $values = [];
+        foreach ($default_values as $key => $val) {
+            if (isset($params[$key])) {
+                $values[$key] = $params[$key];
+            } else {
+                $values[$key] = $val;
+            }
+        }
+
+        $config = $values['config'];
+
+        // Sink of every import path (UI, massive import, cron): the supplier written
+        // on the infocom must be assignable to the item.
+        $supplierId = self::checkSupplierForItem(
+            (int) ($values['fromsupplier'] ?: $config->fields['suppliers_id']),
+            (string) $values['type'],
+            (int) $values['ID'],
+        );
+        $suppliername = $config->fields["name"];
+        $adddoc       = $config->fields["document_adding"];
+        $rubrique     = $config->fields["documentcategories_id"];
+        $addcomments  = $config->fields["comment_adding"];
+        $url_warranty = $config->fields["supplier_url"];
+        $supplier_key = Config::decryptSecret($config->fields["supplier_key"]);
+
+        if (isset($params['fromwarranty']) && $params['fromwarranty']) {
+            $warranty = $values['fromwarranty'];
+        } else {
+            $warranty = $config->fields["warranty_duration"];
+        }
+
+        $contents = "";
+        //$msgerr   = "";
+
+        $options = [
+            "url" => $values['url'],
+            "sn" => $values['sn'],
+            "pn" => $values['pn'],
+            "download" => false,
+            "file" => false,
+            "post" => $values['post'],
+            "suppliername" => $suppliername,
+            "token" => $values['token'],
+        ];
+
+        if ($suppliername == Config::LENOVO
+            && $supplier_key != null) {
+            $options["ClientID"] = $supplier_key;
+            $contents            = self::cURLData($options);
+        }
+        //        elseif ($suppliername == Config::HP) {
+        //            $json = json_decode($contents);
+        //            if (isset($json->access_token)) {
+        //                $options['access_token'] = $json->access_token;
+        //                $options['url']          = $url_warranty;
+        //                $contents                = self::cURLData($options); // Getting Warranty Data
+        //            }
+        //        }
+        else {
+            $contents = self::cURLData($options);
+            // The synchronous HP query fails for some serials: the asynchronous job API still answers
+            if ($suppliername == Config::HP && HP::isQueryRejected($contents)) {
+                $contents = HP::getWarrantyFromJob($options) ?? $contents;
+            }
+        }
+        if (
+            isset($_SESSION['glpi_use_mode'])
+            && ($_SESSION['glpi_use_mode'] == Session::DEBUG_MODE)
+        ) {
+            Toolbox::loginfo($contents);
+        }
+        // Extract the warranty date from the contents variable.
+        $field = self::selectSupplierfield($suppliername);
+
+        if ($field != false) {
+            $contents = stristr($contents, $field);
+        }
+
+        if ($contents !== false) {
+            $maBuyDate    = self::importDate($suppliername, $contents);
+            $maDate       = self::importStartDate($suppliername, $contents);
+            $maDateFin    = self::importDateFin($suppliername, $contents);
+            $warrantyinfo = self::importWarrantyInfo($suppliername, $contents);
+        }
+
+        if (isset($maDate)
+            && $maDate != "0000-00-00"
+            && $maDate != false
+            && isset($maDateFin)
+            && $maDateFin != "0000-00-00"
+            && $maDateFin != false) {
+            [$adebut, $mdebut, $jdebut] = explode('-', $maDate);
+            [$afin, $mfin, $jfin] = explode('-', $maDateFin);
+            $warranty = 0;
+            $warranty = 12 - $mdebut;
+            for ($year = $adebut + 1; $year < $afin; $year++) {
+                $warranty += 12;
+            }
+            $warranty += $mfin;
+        }
+
+        if (isset($maDate)
+            && $maDate != "0000-00-00"
+            && $maDate != false) {
+            //warranty for life
+            if ($warranty > 120) {
+                $warranty = -1;
+            }
+
+            $date    = date("Y-m-d");
+            $options = ["itemtype"      => $values['type'],
+                "ID"            => $values['ID'],
+                "date"          => $date,
+                "supplierId"    => $supplierId,
+                "warranty"      => $warranty,
+                "suppliername"  => $suppliername,
+                "addcomments"   => $addcomments,
+                "maDate"        => $maDate,
+                "buyDate"       => $maBuyDate,
+                "warranty_info" => $warrantyinfo];
+            self::saveInfocoms($options);
+
+            // Create a document in GLPI that will be linked to the asset.
+            if ($adddoc != 0
+                // The cron has no user profile: only an interactive user needs the Document right
+                && (Session::isCron() || Document::canCreate())
+                && $suppliername != Config::DELL
+                && $suppliername != Config::HP) {
+                $options                = ["itemtype"     => $values['type'],
+                    "ID"           => $values['ID'],
+                    "url"          => $values['url'],
+                    "entities_id"  => $values['line']["entities_id"],
+                    "rubrique"     => $rubrique,
+                    "suppliername" => $suppliername];
+                $values["documents_id"] = self::addDocument($options);
+            }
+
+            //insert base locale
+            $values["import_status"] = 1;
+            $values["items_id"]      = $values['ID'];
+            $values["itemtype"]      = $values['type'];
+            $values["date_import"]   = $date;
+            $log                     = new Log();
+            $log->add($values);
+
+            // cleanup Log
+            $log_clean = new Log();
+            $log_clean->deleteByCriteria(
+                [
+                    'items_id'      => $values['ID'],
+                    'itemtype'      => $values['type'],
+                    'import_status' => 2,
+                    'LIMIT'         => 1,
+                ],
+            );
+            if (isset($_SESSION["glpi_plugin_manufacturersimports_total"])) {
+                $_SESSION["glpi_plugin_manufacturersimports_total"] += 1;
+            }
+
+            return true;
+        } else { // Failed check contents
+            self::isInError($values['type'], $values['ID']);
+        }
+        return false;
+    }
+
+    /**
+     * Adding infocoms date of purchase and warranty
+     *
+     * @param      $options
+     */
+    public static function saveInfocoms($options)
+    {
+        //New values
+        $input_infocom = [];
+        if ($options["supplierId"] != 0) {
+            $input_infocom["suppliers_id"] = $options["supplierId"];
+        }
+        $input_infocom["warranty_date"]     = date("Y-m-d", strtotime($options["maDate"]));
+        $input_infocom["warranty_duration"] = $options["warranty"];
+        $input_infocom["warranty_info"]     = $options["warranty_info"];
+        $input_infocom["buy_date"]          = date("Y-m-d", strtotime($options["buyDate"]));
+        $input_infocom["items_id"]          = $options["ID"];
+        $input_infocom["itemtype"]          = $options["itemtype"];
+
+        //add new infocoms
+        $ic = new Infocom();
+        if ($ic->getfromDBforDevice($options["itemtype"], $options["ID"])) {
+            //Original values
+            $ic_comment        = $ic->fields["comment"];
+
+            //New values
+            $input_infocom["id"] = $ic->fields["id"];
+
+            if ($options["addcomments"]) {
+                $input_infocom["comment"] = $ic_comment . "\n"
+                                            . __('Imported from', 'manufacturersimports') . " " . $options["suppliername"] . " "
+                                            . __('With the manufacturersimports plugin', 'manufacturersimports') . " (" . Html::convdate($options["date"]) . ")";
+            }
+            $infocom = new Infocom();
+            $infocom->update($input_infocom);
+        } else {
+            if ($options["addcomments"]) {
+                $input_infocom["comment"] = __('Imported from', 'manufacturersimports')
+                                            . " " . $options["suppliername"] . " " . __('With the manufacturersimports plugin', 'manufacturersimports')
+                                            . " (" . Html::convdate($options["date"]) . ")";
+            }
+            $infocom = new Infocom();
+            $infocom->add($input_infocom);
+        }
+
+    }
+
+    /**
+     * @param $options
+     *
+     * @return int
+     */
+    public static function addDocument($options)
+    {
+        //configure adding doc
+
+        $time_file = date("Y-m-d-H-i");
+        $name      = "";
+        switch ($options["itemtype"]) {
+            case 'Computer':
+                $name = "computer";
+                break;
+            case 'NetworkEquipment':
+                $name = "networking";
+                break;
+            case 'Peripheral':
+                $name = "peripheral";
+                break;
+            case 'Monitor':
+                $name = "monitor";
+                break;
+            case 'Printer':
+                $name = "printer";
+                break;
+            case 'PluginRacksRack':
+                $name = "rack";
+                break;
+        }
+
+        // Neutralize the supplier name as a path component: it originates from the
+        // free "name" field of the configuration and is concatenated into a file
+        // path under GLPI_DOC_DIR/_uploads/. Strip anything but word chars so a
+        // value carrying a path separator can never escape the uploads directory,
+        // independently of the whitelist guards enforced by the callers.
+        $safe_suppliername = preg_replace('/[^A-Za-z0-9_]/', '', (string) $options["suppliername"]);
+        $filename
+           = "infocoms_" . $safe_suppliername
+           . "_" . $name . "_" . (int) $options["ID"] . ".html";
+
+        //on enregistre
+        $path     = GLPI_DOC_DIR . "/_uploads/";
+        $filepath = $path . $filename;
+        $datas    = ["url"          => $options["url"],
+            "download"     => true,
+            "file"         => $filepath,
+            "suppliername" => $options["suppliername"]];
+        self::cURLData($datas);
+
+        $doc = new Document();
+
+        $input                          = [];
+        $input["entities_id"]           = $options["entities_id"];
+        $input["name"]                  = "infocoms_" . $options["suppliername"] . "_" . $name . "_" . $options["ID"];
+        $input["upload_file"]           = $filename;
+        $input["documentcategories_id"] = $options["rubrique"];
+        $input["mime"]                  = "text/html";
+        $input["date_mod"]              = date("Y-m-d H:i:s");
+        $input["users_id"]              = Session::getLoginUserID();
+
+        $newdoc  = $doc->add($input);
+        $docitem = new Document_Item();
+        $docitem->add(['documents_id' => $newdoc,
+            'itemtype'     => $options["itemtype"],
+            'items_id'     => $options["ID"],
+            'entities_id'  => $input["entities_id"]]);
+
+        $temp = new Log();
+        $temp->deleteByCriteria(['itemtype' => $options["itemtype"],
+            'items_id' => $options["ID"]]);
+
+        return $newdoc;
+    }
+
+
+    /**
+     * Log a failed import of an item
+     *
+     * @param $type the itemtype of the device
+     * @param $ID   the ID of the device
+     */
+    public static function isInError($type, $ID)
+    {
+        $date = date("Y-m-d");
+
+        $temp = new Log();
+        $temp->deleteByCriteria(['itemtype' => $type,
+            'items_id' => $ID]);
+
+        //insert base locale
+        $values["import_status"] = 2;
+        $values["items_id"]      = $ID;
+        $values["itemtype"]      = $type;
+        $values["date_import"]   = $date;
+        $log                     = new Log();
+        $log->add($values);
+    }
+}

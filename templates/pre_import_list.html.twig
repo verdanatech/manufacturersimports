@@ -1,0 +1,103 @@
+{#
+ # -------------------------------------------------------------------------
+ # manufacturersimports plugin for GLPI
+ # Copyright (C) 2015-2026 by the manufacturersimports Development Team.
+ #
+ # https://github.com/InfotelGLPI/manufacturersimports
+ # -------------------------------------------------------------------------
+ #
+ # LICENSE
+ #
+ # This file is part of manufacturersimports.
+ #
+ # manufacturersimports is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 3 of the License, or
+ # (at your option) any later version.
+ #
+ # manufacturersimports is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License
+ # along with manufacturersimports. If not, see <http://www.gnu.org/licenses/>.
+ # --------------------------------------------------------------------------
+ #}
+
+{% if no_results %}
+    <div class="alert alert-info text-center">
+        <strong>{{ __('No device finded', 'manufacturersimports') }}</strong>
+    </div>
+{% else %}
+
+    {% set pager_params = {
+        'href':  target ~ '?' ~ parameters,
+        'start': start,
+        'count': numrows,
+        'limit': list_limit
+    } %}
+
+    {{ include('components/pager.html.twig', pager_params) }}
+
+    <form method="post" name="massiveaction_form" id="massiveaction_form"
+          action="{{ plugin_webdir }}/front/massiveaction.php">
+        <input type="hidden" name="_glpi_csrf_token" value="{{ csrf_token() }}">
+
+        {{ include('components/datatable.html.twig', {
+            'columns':            columns,
+            'formatters':         formatters,
+            'entries':            entries,
+            'total_number':       total_number,
+            'filtered_number':    filtered_number,
+            'showmassiveactions': false,
+            'nofilter':           true,
+            'nosort':             true,
+            'is_tab':             false
+        }) }}
+
+        <div class="mt-2 ms-2">
+            {{ __('Total number of devices to import %s', 'manufacturersimports')|format(total_devices) }}
+        </div>
+
+        {% if canedit %}
+            {% if list_limit < max_input_vars %}
+                <div class="d-flex flex-wrap align-items-center gap-2 mt-2 ms-2">
+                    <i class="ti ti-corner-left-up"></i>
+                    <button type="button" class="btn btn-sm btn-ghost-secondary"
+                            data-manufacturersimports-check="1">{{ __('Check all') }}</button>
+                    <span>/</span>
+                    <button type="button" class="btn btn-sm btn-ghost-secondary"
+                            data-manufacturersimports-check="0">{{ __('Uncheck all') }}</button>
+
+                    {# front/massiveaction.php reads "action"; "id" only flags a non-empty list #}
+                    <select class="form-select w-auto" name="action" required
+                            aria-label="{{ __('Actions') }}">
+                        <option value="" selected>{{ empty_value }}</option>
+                        {% if can_import %}
+                            <option value="import">{{ __('Import') }}</option>
+                        {% endif %}
+                        <option value="reinit_once">{{ __('Reset the import', 'manufacturersimports') }}</option>
+                    </select>
+                    <input type="hidden" name="id" value="{{ comp_id }}">
+                    <input type="hidden" name="itemtype" value="{{ itemtype }}">
+                    <input type="hidden" name="start" value="{{ start }}">
+                    <input type="hidden" name="manufacturers_id" value="{{ manufacturers_id }}">
+                    <input type="hidden" name="imported" value="{{ imported }}">
+                    <button type="submit" name="massiveaction" class="btn btn-primary">
+                        {{ _x('button', 'Post') }}
+                    </button>
+                </div>
+                <script type="module" src="{{ plugin_webdir }}/scripts/pre-import.js"></script>
+            {% else %}
+                <div class="alert alert-warning">
+                    {{ __('Selection too large, massive action disabled.') }}
+                </div>
+            {% endif %}
+        {% endif %}
+
+    </form>
+
+    {{ include('components/pager.html.twig', pager_params) }}
+
+{% endif %}
